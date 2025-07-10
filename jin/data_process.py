@@ -26,7 +26,7 @@ class ForeignVisitorDataProcessor:
 
     def __init__(
         self,
-        input_file="./data/1_2_(로우데이터_합본.csv)목적별 국적별 입국_(05년1월~25년5월).csv",
+        input_file="../han/data/1_2_(로우데이터_합본.csv)목적별_국적별_입국(05년1월~25년5월).csv",
     ):
         """
         초기화 함수
