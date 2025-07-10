@@ -15,7 +15,7 @@ Created: 2025-01-15
 import pandas as pd
 import numpy as np
 import os
-from datetime import datetime
+import re
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -23,6 +23,52 @@ warnings.filterwarnings("ignore")
 
 class ForeignVisitorDataProcessor:
     """외국인 입국자 데이터 전처리 클래스"""
+
+    # 제거할 키워드 목록 (딥러닝 모델에 불필요한 집계성 데이터)
+    KEYWORDS_TO_REMOVE = [
+        "소 계",
+        "소계",
+        "합 계",
+        "합계",
+        "계",
+        "교포",
+        "소개",
+        "아시아주",
+        "미 주",
+        "구 주",
+        "아프리카주",
+        "오세아니아주",
+        "기타",
+        "미주",
+        "구주",
+        "아시아",
+        "아프리카",
+        "오세아니아",
+        "전체",
+        "총계",
+        "총 계",
+        "전 체",
+    ]
+
+    # 계절 매핑
+    SEASON_MAP = {
+        12: "겨울",
+        1: "겨울",
+        2: "겨울",
+        3: "봄",
+        4: "봄",
+        5: "봄",
+        6: "여름",
+        7: "여름",
+        8: "여름",
+        9: "가을",
+        10: "가을",
+        11: "가을",
+    }
+
+    # 코로나 시기 정의
+    COVID_START = "2020-03-01"
+    COVID_END = "2022-06-30"
 
     def __init__(
         self,
@@ -72,102 +118,62 @@ class ForeignVisitorDataProcessor:
         """
         print("\n🧹 데이터 클리닝 시작...")
 
-        # 데이터가 로드되었는지 확인
         if self.raw_data is None:
             print("❌ 데이터가 로드되지 않았습니다.")
             return
 
         # 두 번째 행(단위 정보) 제거
         if len(self.raw_data) > 1:
-            # 두 번째 행이 단위 정보인지 확인
             second_row = self.raw_data.iloc[1]
             if pd.isna(second_row.iloc[0]) or "인원(명)" in str(second_row.iloc[2]):
-                self.raw_data = self.raw_data.drop(self.raw_data.index[1])
-                self.raw_data = self.raw_data.reset_index(drop=True)
+                self.raw_data = self.raw_data.drop(self.raw_data.index[1]).reset_index(drop=True)
                 print("✅ 단위 정보 행 제거 완료")
 
-        # 컬럼명이 이미 '국적', '목적'으로 되어 있는지 확인
+        # 컬럼명 설정
         if "국적" not in self.raw_data.columns or "목적" not in self.raw_data.columns:
-            # 첫 번째와 두 번째 컬럼을 국적, 목적으로 설정
             columns = list(self.raw_data.columns)
             columns[0] = "국적"
             columns[1] = "목적"
             self.raw_data.columns = columns
 
-        # NaN 값이 있는 행 제거
+        # NaN 값이 있는 행 제거 및 공백 정리
         self.raw_data = self.raw_data.dropna(subset=["국적", "목적"])
 
         # 공백 문자 제거 (양끝 + 중간 공백 정리)
-        self.raw_data["국적"] = (
-            self.raw_data["국적"].astype(str).str.strip().str.replace(r"\s+", "", regex=True)
-        )
-        self.raw_data["목적"] = (
-            self.raw_data["목적"].astype(str).str.strip().str.replace(r"\s+", "", regex=True)
-        )
+        for col in ["국적", "목적"]:
+            self.raw_data[col] = (
+                self.raw_data[col].astype(str).str.strip().str.replace(r"\s+", "", regex=True)
+            )
 
         print(f"✅ 기본 클리닝 완료: {self.raw_data.shape[0]}행")
 
     def remove_aggregated_rows(self):
         """
-        소계/합계/교포/소개 등 불필요한 행 제거
+        소계/합계/교포/소개 등 불필요한 행 제거 (최적화 버전)
         """
         print("\n🗑️ 소계/합계/불필요한 항목 제거 중...")
 
-        # 제거할 키워드 목록 (딥러닝 모델에 불필요한 집계성 데이터)
-        keywords_to_remove = [
-            "소 계",
-            "소계",
-            "합 계",
-            "합계",
-            "계",
-            "교포",
-            "소개",
-            "아시아주",
-            "미 주",
-            "구 주",
-            "아프리카주",
-            "오세아니아주",
-            "기타",
-            "미주",
-            "구주",
-            "아시아",
-            "아프리카",
-            "오세아니아",
-            "전체",
-            "총계",
-            "총 계",
-            "전 체",
-        ]
-
         original_count = len(self.raw_data)
 
-        # 국적과 목적에서 키워드 제거
-        for keyword in keywords_to_remove:
-            # 국적에서 키워드 포함된 행 제거
-            mask_nationality = ~self.raw_data["국적"].str.contains(keyword, na=False, case=False)
-            # 목적에서 키워드 포함된 행 제거
-            mask_purpose = ~self.raw_data["목적"].str.contains(keyword, na=False, case=False)
+        # 모든 키워드를 한 번에 정규식으로 처리
+        pattern = "|".join(self.KEYWORDS_TO_REMOVE)
 
-            # 두 조건 모두 만족하는 행만 유지
-            self.raw_data = self.raw_data[mask_nationality & mask_purpose]
+        # 국적과 목적에서 키워드가 포함되지 않은 행만 유지
+        mask = (
+            ~self.raw_data["국적"].str.contains(pattern, na=False, case=False)
+            & ~self.raw_data["목적"].str.contains(pattern, na=False, case=False)
+            & (self.raw_data["국적"].str.strip() != "")
+            & (self.raw_data["목적"].str.strip() != "")
+        )
 
-        # "계"만 있는 행 제거 (정확히 "계"인 경우)
-        self.raw_data = self.raw_data[
-            (self.raw_data["국적"].str.strip() != "계")
-            & (self.raw_data["목적"].str.strip() != "계")
-        ]
-
-        # 빈 값이나 공백만 있는 행 제거
-        self.raw_data = self.raw_data[
-            (self.raw_data["국적"].str.strip() != "") & (self.raw_data["목적"].str.strip() != "")
-        ]
+        self.raw_data = self.raw_data[mask]
 
         removed_count = original_count - len(self.raw_data)
         print(f"✅ {removed_count}개 행 제거 완료 (잔여: {len(self.raw_data)}행)")
 
     def reshape_to_long_format(self):
         """
-        Wide format을 Long format으로 변환
+        Wide format을 Long format으로 변환 (최적화 버전)
         """
         print("\n🔄 Long format으로 변환 중...")
 
@@ -183,26 +189,18 @@ class ForeignVisitorDataProcessor:
             value_name="입국자수",
         )
 
-        # 쉼표가 포함된 숫자 처리
+        # 문자열 처리 통합 (쉼표, 따옴표 제거 + 연월 형식 변환)
         long_data["입국자수"] = (
             long_data["입국자수"].astype(str).str.replace(",", "").str.replace('"', "")
         )
-
-        # 숫자가 아닌 값들 제거
-        long_data = long_data[long_data["입국자수"].str.isnumeric()]
-        long_data["입국자수"] = pd.to_numeric(long_data["입국자수"])
-
-        # 연월 정리 (예: "2005년01월" -> "2005-01")
         long_data["연월"] = long_data["연월"].str.replace("년", "-").str.replace("월", "")
 
-        # "계" 값이 포함된 연월 데이터 제거
-        long_data = long_data[~long_data["연월"].str.contains("계", na=False)]
+        # 숫자가 아닌 값들과 "계" 포함 연월 제거
+        numeric_mask = long_data["입국자수"].str.isnumeric()
+        date_mask = long_data["연월"].str.match(r"^\d{4}-\d{2}$", na=False)
 
-        # 연월이 올바른 날짜 형식인지 확인 (YYYY-MM 형태)
-        import re
-
-        date_pattern = r"^\d{4}-\d{2}$"
-        long_data = long_data[long_data["연월"].str.match(date_pattern, na=False)]
+        long_data = long_data[numeric_mask & date_mask]
+        long_data["입국자수"] = pd.to_numeric(long_data["입국자수"])
 
         self.processed_data = long_data
         print(f"✅ Long format 변환 완료: {len(self.processed_data)}행")
@@ -213,42 +211,20 @@ class ForeignVisitorDataProcessor:
         """
         print("\n📅 날짜 특성 변수 생성 중...")
 
-        # 연월을 날짜로 변환 (예: 2015-01 -> 2015-01-01)
-        try:
-            self.processed_data["날짜"] = pd.to_datetime(
-                self.processed_data["연월"] + "-01", format="%Y-%m-%d"
-            )
-        except:
-            # 다른 형식 시도
-            self.processed_data["날짜"] = pd.to_datetime(
-                self.processed_data["연월"], infer_datetime_format=True
-            )
+        # 연월을 날짜로 변환
+        self.processed_data["날짜"] = pd.to_datetime(
+            self.processed_data["연월"] + "-01", format="%Y-%m-%d"
+        )
 
         # 연도, 월, 분기, 계절 추가
         self.processed_data["연도"] = self.processed_data["날짜"].dt.year
         self.processed_data["월"] = self.processed_data["날짜"].dt.month
         self.processed_data["분기"] = self.processed_data["날짜"].dt.quarter
+        self.processed_data["계절"] = self.processed_data["월"].map(self.SEASON_MAP)
 
-        # 계절 정의 (3-5월: 봄, 6-8월: 여름, 9-11월: 가을, 12-2월: 겨울)
-        season_map = {
-            12: "겨울",
-            1: "겨울",
-            2: "겨울",
-            3: "봄",
-            4: "봄",
-            5: "봄",
-            6: "여름",
-            7: "여름",
-            8: "여름",
-            9: "가을",
-            10: "가을",
-            11: "가을",
-        }
-        self.processed_data["계절"] = self.processed_data["월"].map(season_map)
-
-        # 코로나 시기 구분 (2020년 3월 ~ 2022년 6월)
-        covid_start = pd.to_datetime("2020-03-01")
-        covid_end = pd.to_datetime("2022-06-30")
+        # 코로나 시기 구분
+        covid_start = pd.to_datetime(self.COVID_START)
+        covid_end = pd.to_datetime(self.COVID_END)
         self.processed_data["코로나기간"] = (
             (self.processed_data["날짜"] >= covid_start)
             & (self.processed_data["날짜"] <= covid_end)
@@ -268,35 +244,33 @@ class ForeignVisitorDataProcessor:
         """
         print("\n⏰ 지연 특성 변수 생성 중...")
 
-        # 국적-목적별로 그룹화
-        grouped = self.processed_data.groupby(["국적", "목적"])
-
-        # 각 그룹별로 지연 변수 생성
-        lag_features = []
-
-        for name, group in grouped:
+        def create_lag_features(group):
+            """그룹별 지연 특성 생성 함수"""
             group = group.sort_values("날짜").copy()
 
-            # 1개월전, 3개월전, 12개월전 입국자수
-            group["입국자수_1개월전"] = group["입국자수"].shift(1)
-            group["입국자수_3개월전"] = group["입국자수"].shift(3)
-            group["입국자수_12개월전"] = group["입국자수"].shift(12)
+            # 지연 변수들 한 번에 생성
+            for lag in [1, 3, 12]:
+                group[f"입국자수_{lag}개월전"] = group["입국자수"].shift(lag)
 
-            # 이동평균 (3개월, 12개월)
-            group["입국자수_3개월평균"] = group["입국자수"].rolling(window=3, min_periods=1).mean()
-            group["입국자수_12개월평균"] = (
-                group["입국자수"].rolling(window=12, min_periods=1).mean()
-            )
+            # 이동평균들 한 번에 생성
+            for window in [3, 12]:
+                group[f"입국자수_{window}개월평균"] = (
+                    group["입국자수"].rolling(window=window, min_periods=1).mean()
+                )
 
             # 전년동월대비 증감률
             group["전년동월대비증감률"] = (
                 (group["입국자수"] - group["입국자수_12개월전"]) / group["입국자수_12개월전"] * 100
             ).fillna(0)
 
-            lag_features.append(group)
+            return group
 
-        # 모든 그룹 합치기
-        self.processed_data = pd.concat(lag_features, ignore_index=True)
+        # 그룹별 처리 후 결합
+        self.processed_data = (
+            self.processed_data.groupby(["국적", "목적"])
+            .apply(create_lag_features)
+            .reset_index(drop=True)
+        )
 
         print("✅ 지연 특성 변수 생성 완료")
 
@@ -306,10 +280,9 @@ class ForeignVisitorDataProcessor:
         """
         print("\n💾 전처리 데이터 저장 중...")
 
-        # 파일명 생성
         output_file = os.path.join(self.output_dir, "외국인입국자_전처리완료_딥러닝용.csv")
 
-        # 컬럼 순서 정리 (날짜, 연월 컬럼 제거)
+        # 최종 컬럼 순서 (날짜, 연월 제외)
         column_order = [
             "국적",
             "목적",
@@ -328,17 +301,14 @@ class ForeignVisitorDataProcessor:
             "전년동월대비증감률",
         ]
 
-        # 존재하는 컬럼만 선택
+        # 존재하는 컬럼만 선택하여 저장
         available_columns = [col for col in column_order if col in self.processed_data.columns]
         final_data = self.processed_data[available_columns]
 
-        # CSV 저장
         final_data.to_csv(output_file, index=False, encoding="utf-8-sig")
 
         print(f"✅ 저장 완료: {output_file}")
         print(f"📊 최종 데이터 형태: {final_data.shape[0]}행 × {final_data.shape[1]}열")
-
-        # 샘플 데이터 출력
         print(f"\n📋 **최종 전처리 데이터 샘플:**")
         print(final_data.head(10).to_string())
 
@@ -346,24 +316,33 @@ class ForeignVisitorDataProcessor:
 
     def get_data_summary(self):
         """
-        데이터 요약 정보 출력
+        데이터 요약 정보 출력 (최적화 버전)
         """
         if self.processed_data is not None:
+            data = self.processed_data
+
             print(f"\n📈 **데이터 요약 정보**")
-            print(f"- 총 데이터 행수: {len(self.processed_data):,}")
-            print(f"- 국적 수: {self.processed_data['국적'].nunique()}")
-            print(f"- 목적 수: {self.processed_data['목적'].nunique()}")
+            print(f"- 총 데이터 행수: {len(data):,}")
+            print(f"- 국적 수: {data['국적'].nunique()}")
+            print(f"- 목적 수: {data['목적'].nunique()}")
+
+            # 날짜 범위 계산 (간소화)
+            year_month = data[["연도", "월"]].drop_duplicates().sort_values(["연도", "월"])
+            min_date = year_month.iloc[0]
+            max_date = year_month.iloc[-1]
             print(
-                f"- 날짜 범위: {self.processed_data['날짜'].min()} ~ {self.processed_data['날짜'].max()}"
+                f"- 날짜 범위: {min_date['연도']}년 {min_date['월']:02d}월 ~ {max_date['연도']}년 {max_date['월']:02d}월"
             )
-            print(f"- 코로나 기간 데이터: {(self.processed_data['코로나기간'] == 1).sum():,}행")
-            print(f"- 비코로나 기간 데이터: {(self.processed_data['코로나기간'] == 0).sum():,}행")
+
+            covid_counts = data["코로나기간"].value_counts()
+            print(f"- 코로나 기간 데이터: {covid_counts.get(1, 0):,}행")
+            print(f"- 비코로나 기간 데이터: {covid_counts.get(0, 0):,}행")
 
             print(f"\n🏷️ **국적 목록 (상위 10개):**")
-            print(self.processed_data["국적"].value_counts().head(10))
+            print(data["국적"].value_counts().head(10))
 
             print(f"\n🎯 **목적 목록:**")
-            print(self.processed_data["목적"].value_counts())
+            print(data["목적"].value_counts())
 
     def run_preprocessing(self):
         """
@@ -377,35 +356,31 @@ class ForeignVisitorDataProcessor:
             print("🚀 외국인 입국자 데이터 전처리 시작 (코로나 시기 포함)")
             print("=" * 60)
 
-            # 1. 데이터 로드
+            # 전처리 단계별 실행
+            steps = [
+                (self.load_data, "데이터 로드"),
+                (self.clean_data, "데이터 클리닝"),
+                (self.remove_aggregated_rows, "소계/합계 제거"),
+                (self.reshape_to_long_format, "Long format 변환"),
+                (self.add_date_features, "날짜 특성 추가"),
+                (self.add_lag_features, "지연 특성 추가"),
+            ]
+
+            # 데이터 로드 단계는 별도 처리 (반환값 확인 필요)
             if not self.load_data():
                 return False
 
-            # 2. 데이터 클리닝
-            self.clean_data()
+            # 나머지 단계들 실행
+            for step_func, step_name in steps[1:]:
+                step_func()
 
-            # 3. 소계/합계 제거
-            self.remove_aggregated_rows()
-
-            # 4. Long format 변환
-            self.reshape_to_long_format()
-
-            # 5. 날짜 특성 추가
-            self.add_date_features()
-
-            # 6. 지연 특성 추가
-            self.add_lag_features()
-
-            # 7. 데이터 저장
-            output_file = self.save_processed_data()
-
-            # 8. 요약 정보 출력
+            # 최종 저장 및 요약
+            self.save_processed_data()
             self.get_data_summary()
 
             print("\n" + "=" * 60)
             print("✅ 전처리 완료! 🎉")
             print("=" * 60)
-
             return True
 
         except Exception as e:
@@ -418,7 +393,6 @@ class ForeignVisitorDataProcessor:
 
 # 실행 부분
 if __name__ == "__main__":
-    # 데이터 전처리 실행
     processor = ForeignVisitorDataProcessor()
     success = processor.run_preprocessing()
 
