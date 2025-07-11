@@ -1,1 +1,9 @@
 /data
+*.DS_Store
+*.md
+*.txt
+*.log
+*.json
+*.png
+*.h5
+__pycache__
