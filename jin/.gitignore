@@ -4,5 +4,5 @@
 *.log
 *.json
 *.png
-*.h5
 __pycache__
+*.h5
