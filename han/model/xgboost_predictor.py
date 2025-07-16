@@ -1,50 +1,86 @@
 import pandas as pd
+import numpy as np
 from xgboost import XGBRegressor
+from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error, r2_score
+from sklearn.preprocessing import MinMaxScaler
 
-def preprocess_data_xgb(df, country=None, purpose=None):
-    # 필터링
-    if country: df = df[df['국적'] == country]
-    if purpose: df = df[df['목적'] == purpose]
-    # 특이사항 Feature 추가
+def create_features(df):
+    df = df.sort_values('ds')
+    for lag in [1, 3, 6, 12]:
+        df[f'lag_{lag}'] = df['입국자수'].shift(lag)
+    for w in [3, 6, 12]:
+        df[f'roll_mean_{w}'] = df['입국자수'].rolling(w).mean()
+    df['last_year'] = df['입국자수'].shift(12)
+    df['월'] = df['ds'].dt.month
+    df['연도'] = df['ds'].dt.year
     df['성수기'] = df['월'].isin([7,8,12]).astype(int)
     df['명절'] = df['월'].isin([1,2,9,10]).astype(int)
-    df['코로나'] = (df['연도']>=2020).astype(int)
-    # 날짜 인코딩
-    df['ym'] = df['연도']*100 + df['월']
-    X = df[['ym','성수기','명절','코로나']]
+    df['코로나'] = (df['연도'] >= 2020).astype(int)
+    df['연말'] = (df['월'] == 12).astype(int)
+    df['연초'] = (df['월'] == 1).astype(int)
+    df = df.fillna(method='bfill').fillna(method='ffill')
+    return df
+
+def preprocess_data_xgb(df, country=None, purpose=None):
+    if country: df = df[df['국적'] == country]
+    if purpose: df = df[df['목적'] == purpose]
+    df['ds'] = pd.to_datetime(df['연도'].astype(str) + df['월'].astype(str).str.zfill(2), format='%Y%m')
+    df = df.groupby('ds', as_index=False)['입국자수'].sum()
+    df = create_features(df)
+    df = df.iloc[12:].reset_index(drop=True)
+    X = df.drop(['ds','입국자수'], axis=1)
     y = df['입국자수']
-    return X, y
+    feature_cols = X.columns.tolist()
+    return X, y, df, feature_cols
 
 def predict_xgb(df, country, purpose, predict_ym):
-    X, y = preprocess_data_xgb(df, country, purpose)
-    model = XGBRegressor()
-    model.fit(X, y)
-    # 예측 row 생성
-    ym = int(predict_ym)
-    year, month = ym//100, ym%100
-    features = pd.DataFrame([{
-        'ym': ym,
-        '성수기': int(month in [7,8,12]),
-        '명절': int(month in [1,2,9,10]),
-        '코로나': int(year>=2020)
-    }])
-    pred = model.predict(features)[0]
-    # 결과 리턴(정확도/오차 등 추가)
+    X, y, base_df, feature_cols = preprocess_data_xgb(df, country, purpose)
+    scaler_x = MinMaxScaler()
+    scaler_y = MinMaxScaler()
+    X_scaled = scaler_x.fit_transform(X)
+    y_scaled = scaler_y.fit_transform(y.values.reshape(-1,1)).flatten()
+    split_idx = int(len(X_scaled) * 0.85)
+    X_train, X_val = X_scaled[:split_idx], X_scaled[split_idx:]
+    y_train, y_val = y_scaled[:split_idx], y_scaled[split_idx:]
+    model = XGBRegressor(n_estimators=300, max_depth=6, learning_rate=0.07, random_state=42)
+    model.fit(X_train, y_train)
+    val_pred = model.predict(X_val)
+    val_pred_rescaled = scaler_y.inverse_transform(val_pred.reshape(-1,1)).flatten()
+    y_val_rescaled = scaler_y.inverse_transform(y_val.reshape(-1,1)).flatten()
+    rmse = mean_squared_error(y_val_rescaled, val_pred_rescaled, squared=False)
+    mape = mean_absolute_percentage_error(y_val_rescaled, val_pred_rescaled)
+    r2 = r2_score(y_val_rescaled, val_pred_rescaled)
+    # 미래 예측값
+    last_row = base_df.iloc[-1:].copy()
+    pred_date = pd.to_datetime(predict_ym, format='%Y%m')
+    month, year = pred_date.month, pred_date.year
+    for lag in [1,3,6,12]:
+        last_row[f'lag_{lag}'] = base_df['입국자수'].iloc[-lag]
+    for w in [3,6,12]:
+        last_row[f'roll_mean_{w}'] = base_df['입국자수'].iloc[-w:].mean()
+    last_row['last_year'] = base_df['입국자수'].iloc[-12]
+    last_row['월'] = month
+    last_row['연도'] = year
+    last_row['성수기'] = int(month in [7,8,12])
+    last_row['명절'] = int(month in [1,2,9,10])
+    last_row['코로나'] = int(year >= 2020)
+    last_row['연말'] = int(month == 12)
+    last_row['연초'] = int(month == 1)
+    feat_df = last_row.drop(['ds','입국자수'], axis=1)
+    feat_df = feat_df[feature_cols]
+    feature_row_scaled = scaler_x.transform(feat_df)
+    future_pred_scaled = model.predict(feature_row_scaled)[0]
+    future_pred = scaler_y.inverse_transform([[future_pred_scaled]])[0,0]
+
+    # 반드시 예측 시계열(실측 마지막~예측점) 반환!
+    pred_series = pd.DataFrame({
+        'ds': [base_df['ds'].iloc[-1], pred_date],
+        '입국자수': [base_df['입국자수'].iloc[-1], future_pred]
+    })
     return {
-        '예측값': pred,
-        '예측_피쳐': features,
-        '정확도': None,
-        '오차': None
+        '예측값': future_pred,
+        'RMSE': rmse,
+        'MAPE': mape,
+        'R2': r2,
+        '예측_시계열': pred_series
     }
-
-
-if __name__ == "__main__":
-    import pandas as pd
-    df = pd.read_csv('./data/외국인입국자_전처리완료_딥러닝용.csv')
-    # 예시 입력
-    country = 'JAPAN'
-    purpose = '관광'
-    date = '202407'
-    result = predict_prophet(df, country, purpose, date)   # prophet_predictor.py
-    # result = predict_xgb(df, country, purpose, date)     # xgboost_predictor.py
-    print(result)
