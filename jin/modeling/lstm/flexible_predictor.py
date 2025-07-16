@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """
+유연한 국적별 목적별 입국자 예측 모델 (최종 최적화 버전)
 유연한 국적별 목적별 입국자 예측 모델 (최종 안정화 버전)
 Author: Jin
 Created: 2025-01-15
@@ -38,18 +39,34 @@ from datetime import datetime
 import warnings
 import platform
 
-warnings.filterwarnings("ignore")
+# 특정 워닝만 선택적으로 제거 (디버깅시 중요한 워닝은 보존)
+warnings.filterwarnings("ignore", category=UserWarning, module="tensorflow")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=FutureWarning, module="sklearn")
 
 # M1 Mac 폰트 설정
 plt.rcParams["font.family"] = "AppleGothic"
 plt.rcParams["axes.unicode_minus"] = False
 
-# GPU 최적화
-tf.keras.mixed_precision.set_global_policy("mixed_float16")
+# TensorFlow 로깅 레벨 조정 (워닝 최소화)
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # INFO와 WARNING 숨김
+
+# GPU 최적화 (M1 감지 후 적용)
+try:
+    if platform.processor() == "arm" or "Apple" in str(platform.processor()):
+        print("🍎 M1/M2 Mac 감지 - Mixed precision 비활성화")
+    else:
+        tf.keras.mixed_precision.set_global_policy("mixed_float16")
+        print("⚡ Mixed precision 활성화")
+except Exception:
+    print("⚠️ Mixed precision 설정 실패 - 기본 설정 사용")
 
 # XLA 완전 비활성화
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
 os.environ["XLA_FLAGS"] = "--xla_gpu_cuda_data_dir="
+
+# 앙상블 모듈 제거됨 - FlexiblePredictor만 사용
+TOURISM_ENSEMBLE_AVAILABLE = False
 
 
 def setup_gpu():
@@ -60,8 +77,11 @@ def setup_gpu():
             tf.config.experimental.set_memory_growth(physical_devices[0], True)
             print("M1 GPU 메모리 증가 설정 완료")
         return len(physical_devices) > 0
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         print(f"GPU 설정 실패: {e}")
+        return False
+    except ImportError as e:
+        print(f"TensorFlow GPU 모듈 로드 실패: {e}")
         return False
 
 
@@ -71,29 +91,38 @@ class SmartCountryMapper:
     def __init__(self, data_nationalities=None):
         self.data_nationalities = data_nationalities or []
 
-        # 기본 매핑 테이블
+        # 🌏 확장된 25개 국가 한영 매핑 테이블
         self.basic_mapping = {
-            "미국": ["usa", "us", "america", "united states"],
-            "일본": ["japan", "jp", "nippon"],
-            "중국": ["china", "cn", "prc"],
-            "태국": ["thailand", "th", "thai"],
-            "대만": ["taiwan", "tw", "formosa"],
-            "베트남": ["vietnam", "vn"],
-            "필리핀": ["philippines", "ph"],
-            "말레이시아": ["malaysia", "my"],
-            "싱가포르": ["singapore", "sg"],
-            "인도네시아": ["indonesia", "id"],
-            "인도": ["india", "in"],
-            "영국": ["uk", "gb", "britain", "england"],
-            "독일": ["germany", "de"],
-            "프랑스": ["france", "fr"],
-            "이탈리아": ["italy", "it"],
-            "스페인": ["spain", "es"],
-            "호주": ["australia", "au"],
-            "캐나다": ["canada", "ca"],
-            "브라질": ["brazil", "br"],
-            "러시아": ["russia", "ru"],
-            "몽골": ["mongolia", "mn"],
+            # 주요 아시아 국가 (12개)
+            "중국": ["china", "cn", "prc", "중국"],
+            "일본": ["japan", "jp", "nippon", "일본"],
+            "대만": ["taiwan", "tw", "formosa", "대만"],
+            "태국": ["thailand", "th", "thai", "태국"],
+            "베트남": ["vietnam", "vn", "베트남"],
+            "필리핀": ["philippines", "ph", "필리핀"],
+            "말레이시아": ["malaysia", "my", "말레이시아"],
+            "싱가포르": ["singapore", "sg", "싱가포르"],
+            "인도네시아": ["indonesia", "id", "인도네시아"],
+            "인도": ["india", "in", "인도"],
+            "몽골": ["mongolia", "mn", "몽골"],
+            "네팔": ["nepal", "np", "네팔"],
+            
+            # 서구 선진국 (8개)
+            "미국": ["usa", "us", "america", "united states", "미국"],
+            "영국": ["uk", "gb", "britain", "england", "영국"],
+            "독일": ["germany", "de", "독일"],
+            "프랑스": ["france", "fr", "프랑스"],
+            "이탈리아": ["italy", "it", "이탈리아"],
+            "스페인": ["spain", "es", "스페인"],
+            "호주": ["australia", "au", "호주"],
+            "캐나다": ["canada", "ca", "캐나다"],
+            
+            # 기타 주요국 (5개)
+            "러시아": ["russia", "ru", "러시아"],
+            "브라질": ["brazil", "br", "브라질"],
+            "멕시코": ["mexico", "mx", "멕시코"],
+            "터키": ["turkey", "tr", "터키"],
+            "이집트": ["egypt", "eg", "이집트"],
         }
 
     def find_nationality(self, user_input):
@@ -160,9 +189,10 @@ class FlexiblePredictor:
         print(f"⚙️ 성능 모드: {self.performance_mode}")
 
         # 기존 초기화 코드
-        self.data_path = (
-            "../../../jin/data_preprocessing/data/processed/외국인입국자_전처리완료_딥러닝용.csv"
-        )
+        # 절대경로로 수정하여 안정성 확보
+        import os
+        base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+        self.data_path = os.path.join(base_path, "jin", "data_preprocessing", "data", "processed", "외국인입국자_전처리완료_딥러닝용.csv")
         self.results_dir = "results"
         self.models = {}
         self.scalers = {}
@@ -262,8 +292,11 @@ class FlexiblePredictor:
             for i, country in enumerate(unique_countries):
                 self.country_mapping[country] = i
             print(f"국가 매핑 초기화 완료: {len(unique_countries)}개 국가")
-        except Exception as e:
-            print(f"국가 매핑 초기화 중 오류: {e}")
+        except KeyError as e:
+            print(f"데이터에 '국적' 컬럼이 없습니다: {e}")
+            self.country_mapping = {}
+        except (AttributeError, TypeError) as e:
+            print(f"데이터 형식 오류: {e}")
             self.country_mapping = {}
 
     def augment_time_series_data(self, data, target_months=120):
@@ -458,49 +491,76 @@ class FlexiblePredictor:
         augmented["입국자수"] = (augmented["입국자수"] * scale_factor).round().astype(int)
         return augmented
 
+    def _create_cyclical_features(self, processed_data):
+        """주기적 특성 생성 (계절성)"""
+        # 순환 인코딩
+        processed_data["월_sin"] = np.sin(2 * np.pi * processed_data["월"] / 12)
+        processed_data["월_cos"] = np.cos(2 * np.pi * processed_data["월"] / 12)
+        
+        # 원핫 인코딩
+        for quarter in [1, 2, 3, 4]:
+            processed_data[f"분기_{quarter}"] = (processed_data["분기"] == quarter).astype(int)
+        
+        for season in [1, 2, 3, 4]:
+            processed_data[f"계절_{season}"] = (processed_data["계절"] == season).astype(int)
+        
+        return processed_data
+
+    def _create_lag_features(self, processed_data, lag_periods):
+        """지연 특성 생성"""
+        target_col = "입국자수"
+        for lag in lag_periods:
+            processed_data[f"lag_{lag}"] = processed_data[target_col].shift(lag)
+        return processed_data
+
+    def _create_moving_average_features(self, processed_data, windows):
+        """이동평균 특성 생성"""
+        target_col = "입국자수"
+        for window in windows:
+            ma_col = f"ma_{window}"
+            processed_data[ma_col] = processed_data[target_col].rolling(window, min_periods=1).mean()
+            processed_data[f"ma_ratio_{window}"] = processed_data[target_col] / processed_data[ma_col]
+        return processed_data
+
+    def _create_volatility_features(self, processed_data, windows):
+        """변동성 특성 생성"""
+        target_col = "입국자수"
+        for window in windows:
+            volatility_col = f"volatility_{window}"
+            cv_col = f"cv_{window}"
+            ma_col = f"ma_{window}"
+            
+            processed_data[volatility_col] = processed_data[target_col].rolling(window, min_periods=1).std()
+            if ma_col in processed_data.columns:
+                processed_data[cv_col] = processed_data[volatility_col] / processed_data[ma_col]
+        return processed_data
+
+    def _create_momentum_features(self, processed_data, periods):
+        """모멘텀 및 변화율 특성 생성"""
+        target_col = "입국자수"
+        for period in periods:
+            processed_data[f"momentum_{period}"] = processed_data[target_col].pct_change(period)
+            processed_data[f"diff_{period}"] = processed_data[target_col].diff(period)
+        return processed_data
+
     def create_advanced_features(self, data):
-        """변동성 보존형 고급 특성 엔지니어링"""
+        """변동성 보존형 고급 특성 엔지니어링 (리팩토링 버전)"""
         processed_data = data.copy()
 
         # 1. 계절성 특성 강화
-        processed_data["월_sin"] = np.sin(2 * np.pi * processed_data["월"] / 12)
-        processed_data["월_cos"] = np.cos(2 * np.pi * processed_data["월"] / 12)
-
-        # 분기 원핫 인코딩 (계절성 명확화)
-        for quarter in [1, 2, 3, 4]:
-            processed_data[f"분기_{quarter}"] = (processed_data["분기"] == quarter).astype(int)
-
-        # 계절 원핫 인코딩
-        for season in [1, 2, 3, 4]:
-            processed_data[f"계절_{season}"] = (processed_data["계절"] == season).astype(int)
+        processed_data = self._create_cyclical_features(processed_data)
 
         # 2. 변동성 보존 지연 특성
-        for lag in [1, 3, 6, 12]:
-            processed_data[f"lag_{lag}"] = processed_data["입국자수"].shift(lag)
+        processed_data = self._create_lag_features(processed_data, [1, 3, 6, 12])
 
         # 3. 동적 이동평균 (변동성 민감)
-        for window in [3, 6, 12]:
-            processed_data[f"ma_{window}"] = (
-                processed_data["입국자수"].rolling(window, min_periods=1).mean()
-            )
-            # 이동평균 대비 상대적 위치 (변동성 지표)
-            processed_data[f"ma_ratio_{window}"] = (
-                processed_data["입국자수"] / processed_data[f"ma_{window}"]
-            )
+        processed_data = self._create_moving_average_features(processed_data, [3, 6, 12])
 
         # 4. 변동성 지표 강화
-        for window in [3, 6]:
-            processed_data[f"volatility_{window}"] = (
-                processed_data["입국자수"].rolling(window, min_periods=1).std()
-            )
-            processed_data[f"cv_{window}"] = (
-                processed_data[f"volatility_{window}"] / processed_data[f"ma_{window}"]
-            )
+        processed_data = self._create_volatility_features(processed_data, [3, 6])
 
         # 5. 모멘텀 및 변화율 지표
-        for period in [1, 3, 6]:
-            processed_data[f"momentum_{period}"] = processed_data["입국자수"].pct_change(period)
-            processed_data[f"diff_{period}"] = processed_data["입국자수"].diff(period)
+        processed_data = self._create_momentum_features(processed_data, [1, 3, 6])
 
         # 6. 계절성 상호작용 특성
         processed_data["월_x_입국자수"] = processed_data["월"] * processed_data["입국자수"]
@@ -641,8 +701,13 @@ class FlexiblePredictor:
             )
             print(f"대규모 모델 구축: 다층 LSTM (데이터: {data_size}개)")
 
-        # 모델 컴파일
-        learning_rate = 0.01 if data_size < 100 else 0.001
+        # 모델 컴파일 (적응형 학습률)
+        if data_size < 50:
+            learning_rate = 0.01  # 소규모: 높은 학습률
+        elif data_size < 200:
+            learning_rate = 0.005  # 중간: 중간 학습률
+        else:
+            learning_rate = 0.001  # 대규모: 낮은 학습률
 
         # 🔥 M1/M2 Mac 최적화된 optimizer 사용
         if self.performance_mode == "m1_optimized":
@@ -732,9 +797,14 @@ class FlexiblePredictor:
 
             return y_true_rescaled, y_pred_rescaled
 
-        except Exception as e:
-            print(f"역스케일링 오류: {e}")
-            # 기본값 반환
+        except ValueError as e:
+            print(f"스케일러 데이터 형식 오류: {e}")
+            return np.abs(y_true_scaled), np.abs(y_pred_scaled)
+        except AttributeError as e:
+            print(f"스케일러 속성 오류: {e}")
+            return np.abs(y_true_scaled), np.abs(y_pred_scaled)
+        except (IndexError, TypeError) as e:
+            print(f"배열 처리 오류: {e}")
             return np.abs(y_true_scaled), np.abs(y_pred_scaled)
 
     def calculate_comprehensive_metrics(self, y_true, y_pred, purpose_name, thresholds):
@@ -920,7 +990,7 @@ class FlexiblePredictor:
         # 성능 평가
         if len(X_val) > 0:
             print("성능 평가 중...")
-            y_pred_val = model.predict(X_val, verbose=0).flatten()
+            y_pred_val = model.predict(X_val, verbose=1).flatten()
 
             # 역스케일링
             y_true_rescaled, y_pred_rescaled = self.safe_inverse_transform(
@@ -965,7 +1035,14 @@ class FlexiblePredictor:
         return True
 
     def predict_future_months(self, nationality, purpose, target_months):
-        """실제 패턴 반영 예측 (연속성 보정 포함) - 개선된 버전"""
+        """실제 패턴 반영 예측 (연속성 보정 포함) - 관광 목적 특별 처리"""
+
+        # 🏖️ 관광 목적 특별 처리 (성능 향상)
+        if purpose == "관광":
+            print(f"🏖️ {nationality} 관광 목적 - 특별 최적화 모델 적용")
+            return self._predict_tourism_optimized(nationality, purpose, target_months)
+
+        # 기존 LSTM 모델 로직
         key = f"{nationality}_{purpose}"
 
         if key not in self.models:
@@ -1033,7 +1110,7 @@ class FlexiblePredictor:
                 predictions.append({"month": target_month, "value": actual_value, "type": "actual"})
             else:
                 # 예측값 계산
-                pred_scaled = model.predict(sequence.reshape(1, sequence_length, -1), verbose=0)[
+                pred_scaled = model.predict(sequence.reshape(1, sequence_length, -1), verbose=1)[
                     0, 0
                 ]
 
@@ -1139,6 +1216,535 @@ class FlexiblePredictor:
 
         return predictions
 
+    def _predict_tourism_optimized(self, nationality, purpose, target_months):
+        """관광 목적 특별 최적화 예측"""
+        print("🏖️ 관광 전용 최적화 처리 시작...")
+        
+        key = f"{nationality}_{purpose}"
+        
+        # 1. 관광 전용 모델 학습 (강화된 설정)
+        if key not in self.models:
+            success = self._train_tourism_model(nationality, purpose)
+            if not success:
+                print("⚠️ 관광 최적화 실패, 기본 모델로 전환")
+                # 기본 모델 학습 시도
+                if not self.train_purpose_model(nationality, purpose):
+                    return None
+        
+        # 2. 관광 데이터 특별 처리
+        combo_data = (
+            self.data[(self.data["국적"] == nationality) & (self.data["목적"] == purpose)]
+            .copy()
+            .sort_values("날짜")
+        )
+        
+        # 3. 관광 특화 계절성 패턴 추출
+        seasonal_pattern = self._extract_tourism_seasonal_pattern(combo_data)
+        
+        # 4. 관광 변동성 스무딩
+        smoothed_data = self._apply_tourism_smoothing(combo_data)
+        
+        # 5. 관광 최적화 예측 실행
+        model = self.models[key]
+        scaler = self.scalers[key]
+        
+        # 특성 준비 (관광 최적화)
+        features = self._create_tourism_features(smoothed_data)
+        sequence_length = min(9, len(features) // 3)  # 관광은 더 긴 시퀀스
+        recent_data = features.tail(sequence_length).copy()
+        current_sequence = scaler.transform(recent_data)
+        
+        # 연속성 보정
+        last_actual_value = combo_data["입국자수"].iloc[-1]
+        last_actual_date = combo_data["날짜"].iloc[-1]
+        recent_3months_avg = combo_data["입국자수"].tail(3).mean()
+        
+        print(f"관광 연속성 보정 기준: {last_actual_date.strftime('%Y-%m')} = {last_actual_value:,}명")
+        print(f"관광 최근 3개월 평균: {recent_3months_avg:,}명")
+        
+        predictions = []
+        sequence = current_sequence.copy()
+        
+        first_pred_month = target_months[0]
+        first_pred_date = pd.to_datetime(first_pred_month + "-01")
+        months_gap = (first_pred_date.year - last_actual_date.year) * 12 + (
+            first_pred_date.month - last_actual_date.month
+        )
+        
+        # 관광 전용 연속성 강도 (더 부드럽게)
+        continuity_strength = max(0.6, 1.0 - (months_gap * 0.05))
+        print(f"관광 연속성 강도: {continuity_strength:.2f} (간격: {months_gap}개월)")
+        
+        for idx, target_month in enumerate(target_months):
+            target_date = pd.to_datetime(target_month + "-01")
+            
+            # 기존 데이터 확인
+            existing_data = combo_data[combo_data["날짜"] == target_date]
+            
+            if len(existing_data) > 0:
+                actual_value = existing_data["입국자수"].iloc[0]
+                predictions.append({"month": target_month, "value": actual_value, "type": "actual"})
+            else:
+                # 예측값 계산
+                pred_scaled = model.predict(sequence.reshape(1, sequence_length, -1), verbose=1)[0, 0]
+                
+                # 역스케일링
+                dummy_data = np.zeros((1, features.shape[1]))
+                dummy_data[0, 0] = pred_scaled
+                pred_value = scaler.inverse_transform(dummy_data)[0, 0]
+                
+                # 🏖️ 관광 특화 후처리
+                # 1. 계절성 적용
+                month_num = target_date.month
+                seasonal_factor = seasonal_pattern.get(month_num, 1.0)
+                pred_value *= seasonal_factor
+                
+                # 🔄 2. 정밀화된 관광 연속성 보정 시스템 (90% 강도)
+                if idx == 0:
+                    # 첫 번째 예측: 실제값과 강한 연속성 (최대 90%)
+                    adaptive_strength = min(0.9, continuity_strength + 0.2)  # 기본 강도 + 20%
+                    continuity_factor = adaptive_strength * 0.85  # 85%까지
+                    pred_value = (pred_value * (1 - continuity_factor)) + (last_actual_value * continuity_factor)
+                    print(f"  🔗 첫 예측 연속성: {continuity_factor:.2f} 강도로 {last_actual_value:,.0f}명과 연결")
+                    
+                elif idx <= 2:
+                    # 초기 2-3개월: 높은 연속성 유지
+                    base_factor = 0.7 - (idx - 1) * 0.15  # 0.7 → 0.55 감소
+                    continuity_factor = continuity_strength * base_factor
+                    prev_value = predictions[-1]["value"]
+                    pred_value = (pred_value * (1 - continuity_factor)) + (prev_value * continuity_factor)
+                    print(f"  🔗 초기 연속성 ({idx+1}개월): {continuity_factor:.2f} 강도")
+                    
+                elif idx <= 5:
+                    # 중기 3-6개월: 중간 연속성
+                    base_factor = 0.4 - (idx - 3) * 0.08  # 0.4 → 0.24 감소
+                    continuity_factor = continuity_strength * base_factor
+                    prev_value = predictions[-1]["value"]
+                    
+                    # 급격한 변화 감지 시 연속성 강화
+                    change_rate = abs(pred_value - prev_value) / prev_value if prev_value > 0 else 0
+                    if change_rate > 0.15:  # 15% 이상 변화시
+                        continuity_factor *= 1.5  # 연속성 50% 강화
+                        print(f"  ⚡ 급변 감지 ({change_rate:.1%}): 연속성 {continuity_factor:.2f}로 강화")
+                    
+                    pred_value = (pred_value * (1 - continuity_factor)) + (prev_value * continuity_factor)
+                    
+                elif idx <= 8:
+                    # 후기 7-9개월: 약한 연속성
+                    base_factor = max(0.1, 0.2 - (idx - 6) * 0.03)  # 0.2 → 0.14 감소
+                    continuity_factor = continuity_strength * base_factor
+                    prev_value = predictions[-1]["value"]
+                    
+                    # 장기 트렌드 고려
+                    if idx >= 3:
+                        recent_trend = (predictions[-1]["value"] - predictions[-3]["value"]) / predictions[-3]["value"]
+                        if abs(recent_trend) < 0.05:  # 안정적 트렌드인 경우
+                            continuity_factor *= 1.2  # 연속성 20% 강화
+                    
+                    pred_value = (pred_value * (1 - continuity_factor)) + (prev_value * continuity_factor)
+                    
+                else:
+                    # 장기 10개월+: 최소 연속성
+                    base_factor = max(0.05, 0.15 - (idx - 9) * 0.01)  # 최소 5% 유지
+                    continuity_factor = continuity_strength * base_factor
+                    prev_value = predictions[-1]["value"]
+                    pred_value = (pred_value * (1 - continuity_factor)) + (prev_value * continuity_factor)
+                
+                # 🔥 3. 강화된 관광 변동성 제어 시스템 (25% 제한)
+                if idx > 0:
+                    prev_value = predictions[-1]["value"]
+                    
+                    # 적응형 변동성 제한 (시간 경과에 따라 완화)
+                    if idx <= 3:
+                        max_change_rate = 0.20  # 초기 3개월: 20% 제한 (더 엄격)
+                    elif idx <= 6:
+                        max_change_rate = 0.25  # 중간 3개월: 25% 제한 (기본)
+                    elif idx <= 9:
+                        max_change_rate = 0.30  # 후반 3개월: 30% 제한 (완화)
+                    else:
+                        max_change_rate = 0.35  # 장기 예측: 35% 제한 (불확실성 반영)
+                    
+                    max_change = prev_value * max_change_rate
+                    change = pred_value - prev_value
+                    
+                    # 변화량 제한 적용
+                    if abs(change) > max_change:
+                        limited_change = max_change if change > 0 else -max_change
+                        pred_value = prev_value + limited_change
+                        
+                        # 제한 적용 로깅
+                        if idx < 5:  # 초기 몇 개월만 로깅
+                            print(f"  📊 관광 변동성 제어: {target_month} - 변화량 {change/prev_value*100:.1f}% → {max_change_rate*100:.0f}% 제한")
+                    
+                    # 추가: 급격한 감소 방지 (관광은 급감하지 않음)
+                    min_value = prev_value * 0.80  # 전월 대비 80% 이상 유지
+                    if pred_value < min_value:
+                        pred_value = min_value
+                        print(f"  🛡️ 관광 최소값 보장: {target_month} - {min_value:,.0f}명 이상 유지")
+                
+                # 4. 최소값 보장 (관광은 0이 될 수 없음)
+                pred_value = max(pred_value, last_actual_value * 0.15)
+                
+                predictions.append({"month": target_month, "value": int(pred_value), "type": "predicted"})
+                
+                # 시퀀스 업데이트 (관광 최적화)
+                if idx < len(target_months) - 1:
+                    # 간단한 시퀀스 업데이트
+                    new_features = np.zeros(features.shape[1])
+                    new_features[0] = pred_value  # 입국자수 위치
+                    new_features[1] = target_date.year  # 연도
+                    new_features[2] = target_date.month  # 월
+                    
+                    new_sequence = scaler.transform(new_features.reshape(1, -1))[0]
+                    sequence = np.roll(sequence, -1, axis=0)
+                    sequence[-1] = new_sequence
+        
+        print(f"✅ 관광 최적화 예측 완료 - 변동성 제어 적용")
+        return predictions
+    
+    def _train_tourism_model(self, nationality, purpose):
+        """관광 전용 모델 학습"""
+        print("🏖️ 관광 전용 모델 학습 시작...")
+        
+        combo_data = (
+            self.data[(self.data["국적"] == nationality) & (self.data["목적"] == purpose)]
+            .copy()
+            .sort_values("날짜")
+        )
+        
+        if len(combo_data) < 36:
+            print("❌ 관광 모델 학습을 위한 최소 데이터 부족")
+            return False
+        
+        # 관광 데이터 스무딩
+        smoothed_data = self._apply_tourism_smoothing(combo_data)
+        
+        # 관광 특화 특성 생성
+        features = self._create_tourism_features(smoothed_data)
+        
+        # 시퀀스 생성 (관광은 더 긴 시퀀스)
+        sequence_length = min(9, len(features) // 3)
+        X, y, scaler = self.create_sequences(features, sequence_length)
+        
+        if len(X) == 0:
+            print("❌ 관광 시퀀스 생성 실패")
+            return False
+        
+        # 관광 전용 모델 구조
+        model = self._build_tourism_model(X.shape[1:], len(combo_data))
+        
+        # 학습 설정 (관광 최적화)
+        split_idx = int(len(X) * 0.85)
+        train_X, train_y = X[:split_idx], y[:split_idx]
+        val_X, val_y = X[split_idx:], y[split_idx:]
+        
+        if len(val_X) == 0:
+            # 검증 데이터가 없으면 단순 학습
+            print("🏖️ 관광 모델 단순 학습 (검증 데이터 부족)")
+            model.fit(train_X, train_y, epochs=50, batch_size=min(8, len(train_X)), verbose=1)
+        else:
+            # 관광 전용 콜백
+            callbacks = [
+                EarlyStopping(monitor='val_loss', patience=15, restore_best_weights=True),
+                ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=8, min_lr=1e-6)
+            ]
+            
+            # 학습 실행
+            print("🏖️ 관광 최적화 모델 학습 중...")
+            model.fit(
+                train_X, train_y,
+                validation_data=(val_X, val_y),
+                epochs=100,  # 관광은 더 긴 학습
+                batch_size=min(16, max(4, len(train_X) // 15)),
+                callbacks=callbacks,
+                verbose=1
+            )
+        
+        # 모델 저장
+        key = f"{nationality}_{purpose}"
+        self.models[key] = model
+        self.scalers[key] = scaler
+        
+        print("✅ 관광 최적화 모델 학습 완료")
+        return True
+    
+    def _apply_tourism_smoothing(self, data):
+        """관광 데이터 스무딩 (변동성 감소)"""
+        smoothed_data = data.copy()
+        
+        # 이동평균 스무딩 (더 부드럽게)
+        smoothed_data["입국자수"] = smoothed_data["입국자수"].rolling(
+            window=3, center=True, min_periods=1
+        ).mean()
+        
+        return smoothed_data
+    
+    def _create_tourism_features(self, data):
+        """🌍 관광 특화 강화된 계절성 특성 생성"""
+        # 기본 특성 생성
+        features = self.create_advanced_features(data)
+        
+        # 🏖️ 관광 전용 강화된 계절성 특성
+        # 1. 다중 주기 계절성 (월별, 분기별, 반기별)
+        features["강화계절_sin"] = np.sin(4 * np.pi * features["월"] / 12)  # 2배 주기
+        features["강화계절_cos"] = np.cos(4 * np.pi * features["월"] / 12)
+        features["분기계절_sin"] = np.sin(2 * np.pi * features["분기"] / 4)  # 분기별 계절성
+        features["분기계절_cos"] = np.cos(2 * np.pi * features["분기"] / 4)
+        features["반기계절_sin"] = np.sin(2 * np.pi * features["월"] / 6)   # 반기별 계절성
+        features["반기계절_cos"] = np.cos(2 * np.pi * features["월"] / 6)
+        
+        # 2. 세분화된 휴가철/성수기 지표
+        # 여름 성수기 (7-8월)
+        features["여름성수기"] = features["월"].isin([7, 8]).astype(int)
+        # 겨울 휴가철 (12-2월)
+        features["겨울휴가철"] = features["월"].isin([12, 1, 2]).astype(int)
+        # 봄 관광철 (4-5월)
+        features["봄관광철"] = features["월"].isin([4, 5]).astype(int)
+        # 가을 관광철 (9-11월)
+        features["가을관광철"] = features["월"].isin([9, 10, 11]).astype(int)
+        # 어깨철 (비성수기)
+        features["어깨철"] = features["월"].isin([3, 6]).astype(int)
+        
+        # 3. 주요 관광 이벤트 기반 특성
+        # 한국 벚꽃철 (4월)
+        features["벚꽃철"] = (features["월"] == 4).astype(int)
+        # 단풍철 (10-11월)
+        features["단풍철"] = features["월"].isin([10, 11]).astype(int)
+        # 스키철 (12-2월)
+        features["스키철"] = features["월"].isin([12, 1, 2]).astype(int)
+        # 해수욕철 (7-8월)
+        features["해수욕철"] = features["월"].isin([7, 8]).astype(int)
+        
+        # 4. 날씨 기반 관광 특성
+        # 더위지수 (여름철 관광 영향)
+        features["더위지수"] = 0
+        for month in [6, 7, 8]:
+            month_mask = features["월"] == month
+            if month == 6:
+                features.loc[month_mask, "더위지수"] = 2
+            elif month == 7:
+                features.loc[month_mask, "더위지수"] = 3
+            elif month == 8:
+                features.loc[month_mask, "더위지수"] = 3
+        
+        # 추위지수 (겨울철 관광 영향)
+        features["추위지수"] = 0
+        for month in [12, 1, 2]:
+            month_mask = features["월"] == month
+            if month == 12:
+                features.loc[month_mask, "추위지수"] = 2
+            elif month == 1:
+                features.loc[month_mask, "추위지수"] = 3
+            elif month == 2:
+                features.loc[month_mask, "추위지수"] = 2
+        
+        # 5. 관광 선호도 지수 (월별 가중치)
+        tourism_preference = {1: 0.7, 2: 0.6, 3: 0.8, 4: 0.95, 5: 0.9, 6: 0.85,
+                            7: 1.0, 8: 1.0, 9: 0.9, 10: 0.95, 11: 0.9, 12: 0.8}
+        features["관광선호도"] = features["월"].map(tourism_preference).fillna(0.7)
+        
+        # 6. 강화된 관광 패턴 지표
+        # 이동평균 기반 트렌드 (3개월, 6개월, 12개월)
+        features["관광_트렌드_3m"] = features["입국자수"].rolling(3, min_periods=1).mean()
+        features["관광_트렌드_6m"] = features["입국자수"].rolling(6, min_periods=1).mean()
+        features["관광_트렌드_12m"] = features["입국자수"].rolling(12, min_periods=1).mean()
+        
+        # 계절별 변동성
+        features["관광_변동성_3m"] = features["입국자수"].rolling(3, min_periods=1).std().fillna(0)
+        features["관광_변동성_6m"] = features["입국자수"].rolling(6, min_periods=1).std().fillna(0)
+        
+        # 전년 동월 비교 (가능한 경우)
+        if len(features) >= 12:
+            features["전년동월_비율"] = features["입국자수"] / features["입국자수"].shift(12)
+            features["전년동월_비율"] = features["전년동월_비율"].fillna(1.0)
+        else:
+            features["전년동월_비율"] = 1.0
+        
+        # 7. 계절성 상호작용 특성 (강화)
+        features["월_x_관광선호도"] = features["월"] * features["관광선호도"]
+        features["계절_x_관광선호도"] = features["계절"] * features["관광선호도"]
+        features["여름성수기_x_입국자수"] = features["여름성수기"] * features["입국자수"]
+        features["겨울휴가철_x_입국자수"] = features["겨울휴가철"] * features["입국자수"]
+        
+        # 8. 장기 패턴 추출
+        # 계절성 강도 (해당 월의 평균 대비 비율)
+        if len(features) >= 24:  # 2년 이상 데이터
+            monthly_avg = features.groupby(features.index % 12)["입국자수"].transform('mean')
+            overall_avg = features["입국자수"].mean()
+            features["계절성_강도"] = monthly_avg / overall_avg if overall_avg > 0 else 1.0
+        else:
+            features["계절성_강도"] = 1.0
+        
+        print(f"🏖️ 관광 특화 강화 특성 생성 완료: {len([col for col in features.columns if any(keyword in col for keyword in ['계절', '성수기', '휴가', '관광', '벚꽃', '단풍', '스키', '해수욕'])])}개 계절성 특성")
+        
+        return features
+    
+    def _extract_tourism_seasonal_pattern(self, data):
+        """관광 특화 계절성 패턴 추출"""
+        monthly_avg = data.groupby(data["날짜"].dt.month)["입국자수"].mean()
+        overall_avg = data["입국자수"].mean()
+        
+        # 계절성 비율 계산
+        seasonal_pattern = {}
+        for month in range(1, 13):
+            if month in monthly_avg.index and overall_avg > 0:
+                seasonal_pattern[month] = monthly_avg[month] / overall_avg
+            else:
+                seasonal_pattern[month] = 1.0
+        
+        return seasonal_pattern
+    
+    def _build_tourism_model(self, input_shape, data_size):
+        """🏖️ 관광 전용 최적화 2층 LSTM 아키텍처"""
+        # 데이터 크기에 따른 적응형 구조
+        if data_size < 80:
+            # 초소규모: 단일 LSTM + 강화된 정규화
+            model = Sequential([
+                LSTM(
+                    48,  # 뉴런 수 증가 (32→48)
+                    input_shape=input_shape, 
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.25,  # 드롭아웃 조정
+                    recurrent_dropout=0.15,
+                    return_sequences=False
+                ),
+                BatchNormalization(momentum=0.9),  # 배치정규화 강화
+                Dropout(0.35),  # 드롭아웃 증가
+                Dense(32, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+                BatchNormalization(),
+                Dropout(0.2),
+                Dense(16, activation="relu"),
+                Dense(1, activation="linear", dtype="float32"),
+            ])
+            print(f"🏖️ 관광 소규모 강화 모델 구축 (데이터: {data_size}개, 뉴런: 48)")
+            
+        elif data_size < 150:
+            # 중규모: 개선된 2층 LSTM
+            model = Sequential([
+                # 첫 번째 LSTM층 (장기 패턴 감지)
+                LSTM(
+                    80,  # 뉴런 수 증가 (64→80)
+                    return_sequences=True,
+                    input_shape=input_shape,
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.3,
+                    recurrent_dropout=0.2,
+                ),
+                BatchNormalization(momentum=0.95),  # 배치정규화 강화
+                Dropout(0.35),
+                
+                # 두 번째 LSTM층 (단기 패턴 정제)
+                LSTM(
+                    40,  # 뉴런 수 증가 (32→40)
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.25,
+                    recurrent_dropout=0.15,
+                    return_sequences=False
+                ),
+                BatchNormalization(momentum=0.9),
+                Dropout(0.4),  # 드롭아웃 강화
+                
+                # 강화된 완전연결층
+                Dense(48, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+                BatchNormalization(),
+                Dropout(0.3),
+                Dense(24, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.0005)),
+                Dropout(0.2),
+                Dense(1, activation="linear", dtype="float32"),
+            ])
+            print(f"🏖️ 관광 최적화 2층 LSTM 모델 구축 (데이터: {data_size}개, 뉴런: 80→40)")
+        else:
+            # 대규모: 고성능 3층 LSTM
+            model = Sequential([
+                # 첫 번째 LSTM층 (장기 트렌드 감지)
+                LSTM(
+                    96,  # 뉴런 수 증가
+                    return_sequences=True,
+                    input_shape=input_shape,
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.25,
+                    recurrent_dropout=0.15,
+                ),
+                BatchNormalization(momentum=0.95),
+                Dropout(0.3),
+                
+                # 두 번째 LSTM층 (중기 패턴 감지)
+                LSTM(
+                    64,
+                    return_sequences=True,
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.3,
+                    recurrent_dropout=0.2,
+                ),
+                BatchNormalization(momentum=0.9),
+                Dropout(0.35),
+                
+                # 세 번째 LSTM층 (단기 정밀 예측)
+                LSTM(
+                    32,
+                    activation="tanh",
+                    recurrent_activation="sigmoid",
+                    dropout=0.25,
+                    recurrent_dropout=0.15,
+                    return_sequences=False
+                ),
+                BatchNormalization(momentum=0.9),
+                Dropout(0.4),
+                
+                # 고도화된 완전연결층
+                Dense(64, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.001)),
+                BatchNormalization(),
+                Dropout(0.3),
+                Dense(32, activation="relu", kernel_regularizer=tf.keras.regularizers.l2(0.0005)),
+                Dropout(0.2),
+                Dense(16, activation="relu"),
+                Dense(1, activation="linear", dtype="float32"),
+            ])
+            print(f"🏖️ 관광 고성능 3층 LSTM 모델 구축 (데이터: {data_size}개, 뉴런: 96→64→32)")
+        
+        # 관광 전용 최적화 컴파일 설정
+        # 적응형 학습률
+        if data_size < 80:
+            learning_rate = 0.002  # 소규모는 높은 학습률
+        elif data_size < 150:
+            learning_rate = 0.0015  # 중규모는 중간 학습률
+        else:
+            learning_rate = 0.001  # 대규모는 안정적 학습률
+        
+        if self.performance_mode == "m1_optimized":
+            from tensorflow.keras.optimizers.legacy import Adam as LegacyAdam
+            optimizer = LegacyAdam(
+                learning_rate=learning_rate,
+                beta_1=0.9,      # 모멘텀 최적화
+                beta_2=0.999,    # RMSprop 최적화
+                epsilon=1e-7,    # 수치 안정성
+                clipnorm=1.0     # 그래디언트 클리핑
+            )
+            print(f"🏖️ M1 최적화: 관광 전용 Legacy Adam optimizer (lr={learning_rate})")
+        else:
+            optimizer = Adam(
+                learning_rate=learning_rate,
+                beta_1=0.9,
+                beta_2=0.999,
+                epsilon=1e-7,
+                clipnorm=1.0
+            )
+            print(f"🏖️ 관광 전용 최적화 Adam optimizer (lr={learning_rate})")
+        
+        # 손실함수 개선
+        model.compile(
+            optimizer=optimizer,
+            loss="huber",  # Huber 손실 (MSE + MAE의 장점 결합)
+            metrics=["mae", "mse"]
+        )
+        
+        return model
+
     def extract_seasonal_pattern(self, data):
         """계절성 패턴 추출"""
         seasonal_pattern = {}
@@ -1224,6 +1830,18 @@ class FlexiblePredictor:
             print("저장할 성능 평가 결과가 없습니다.")
             return
 
+        # 주요 목적 리스트 (누락 방지)
+        main_purposes = ["공용", "상용", "유학연수", "관광"]
+        main_nationality = "중국"  # 기본적으로 중국 기준, 필요시 확장
+
+        # 누락된 목적 체크 및 강제 학습/평가
+        existing_keys = set((row["nationality"], row["purpose"]) for row in self.performance_results)
+        for purpose in main_purposes:
+            key = (main_nationality, purpose)
+            if key not in existing_keys:
+                print(f"[리포트 보완] {main_nationality}-{purpose} 누락 → 강제 학습/평가 실행")
+                self.train_purpose_model(main_nationality, purpose)
+
         # 성능 결과 데이터프레임 생성
         performance_df = pd.DataFrame(self.performance_results)
 
@@ -1278,6 +1896,11 @@ class FlexiblePredictor:
 
         # 리포트 데이터프레임 생성
         report_df = pd.DataFrame(report_data)
+
+        # 주요 목적이 모두 포함되어 있는지 최종 체크 (누락 시 경고)
+        for purpose in main_purposes:
+            if not ((report_df["국적"] == main_nationality) & (report_df["목적"] == purpose)).any():
+                print(f"[경고] 리포트에 {main_nationality}-{purpose} 결과가 누락되어 있습니다!")
 
         # CSV 저장
         report_path = f"{self.results_dir}/리포트.csv"
@@ -1463,7 +2086,7 @@ class FlexiblePredictor:
         print(f"=" * 80)
 
     def find_nationality_simple(self, input_text, nationalities):
-        """간단한 국가 매핑 (한글/영어 지원)"""
+        """강화된 국가 매핑 (한글/영어 지원)"""
         input_text = input_text.lower().strip()
 
         # 직접 매칭 (대소문자 무시)
@@ -1476,23 +2099,32 @@ class FlexiblePredictor:
             if input_text in nat.lower() or nat.lower() in input_text:
                 return nat
 
-        # 간단한 한영 매핑
+        # 확장된 한영 매핑
         mapping = {
-            "대만": "대만",
-            "taiwan": "대만",
-            "중국": "중국",
-            "china": "중국",
-            "일본": "일본",
-            "japan": "일본",
-            "미국": "미국",
-            "usa": "미국",
-            "america": "미국",
-            "태국": "태국",
-            "thailand": "태국",
-            "베트남": "베트남",
-            "vietnam": "베트남",
-            "싱가포르": "싱가포르",
-            "singapore": "싱가포르",
+            # 기존 매핑
+            "대만": "대만", "taiwan": "대만", "tw": "대만",
+            "중국": "중국", "china": "중국", "cn": "중국", "중": "중국",
+            "일본": "일본", "japan": "일본", "jp": "일본", "일": "일본",
+            "미국": "미국", "usa": "미국", "america": "미국", "us": "미국", "미": "미국",
+            "태국": "태국", "thailand": "태국", "th": "태국", "태": "태국",
+            "베트남": "베트남", "vietnam": "베트남", "vn": "베트남", "베": "베트남",
+            "싱가포르": "싱가포르", "singapore": "싱가포르", "sg": "싱가포르", "싱": "싱가포르",
+            # 추가 매핑
+            "홍콩": "홍콩", "hongkong": "홍콩", "hk": "홍콩", "홍": "홍콩",
+            "필리핀": "필리핀", "philippines": "필리핀", "ph": "필리핀", "필": "필리핀",
+            "인도네시아": "인도네시아", "indonesia": "인도네시아", "id": "인도네시아", "인": "인도네시아",
+            "말레이시아": "말레이시아", "malaysia": "말레이시아", "my": "말레이시아", "말": "말레이시아",
+            "인도": "인도", "india": "인도", "in": "인도",
+            "영국": "영국", "uk": "영국", "britain": "영국", "영": "영국",
+            "프랑스": "프랑스", "france": "프랑스", "fr": "프랑스", "프": "프랑스",
+            "독일": "독일", "germany": "독일", "de": "독일", "독": "독일",
+            "이탈리아": "이탈리아", "italy": "이탈리아", "it": "이탈리아", "이": "이탈리아",
+            "스페인": "스페인", "spain": "스페인", "es": "스페인", "스": "스페인",
+            "러시아": "러시아(연방)", "russia": "러시아(연방)", "ru": "러시아(연방)", "러": "러시아(연방)",
+            "캐나다": "캐나다", "canada": "캐나다", "ca": "캐나다", "캐": "캐나다",
+            "호주": "오스트레일리아", "australia": "오스트레일리아", "au": "오스트레일리아", "호": "오스트레일리아",
+            "브라질": "브라질", "brazil": "브라질", "br": "브라질", "브": "브라질",
+            "몽골": "몽골", "mongolia": "몽골", "mn": "몽골", "몽": "몽골",
         }
 
         if input_text in mapping:
@@ -1507,9 +2139,14 @@ class FlexiblePredictor:
         """안전한 국적 입력 처리"""
         while True:
             try:
-                nationality_input = input(
-                    "국적을 영어로 입력하세요 (또는 'list'로 전체 목록 보기): "
-                ).strip()
+                try:
+                    nationality_input = input(
+                        "국적을 입력하세요 (한글/영어 가능, 'list'로 전체 목록 보기): "
+                    ).strip()
+                except UnicodeDecodeError:
+                    nationality_input = input(
+                        "국적을 영어로 입력하세요 (또는 'list'로 전체 목록 보기): "
+                    ).strip()
 
                 if not nationality_input:
                     print("빈 값은 입력할 수 없습니다. 다시 입력해주세요.")
@@ -1552,7 +2189,10 @@ class FlexiblePredictor:
                     )
                     print(f"  {i}. {purpose} ({data_count}개월 데이터)")
 
-                purpose_input = input("목적을 입력하세요 (번호 또는 이름, 전체는 'all'): ").strip()
+                try:
+                    purpose_input = input("목적을 입력하세요 (번호 또는 이름, 전체는 'all'): ").strip()
+                except UnicodeDecodeError:
+                    purpose_input = input("목적을 영어로 입력하세요 (번호 또는 이름, 전체는 'all'): ").strip()
 
                 if not purpose_input:
                     print("빈 값은 입력할 수 없습니다. 다시 입력해주세요.")
@@ -1595,7 +2235,10 @@ class FlexiblePredictor:
         """안전한 날짜 입력 처리"""
         while True:
             try:
-                date_input = input(f"{date_type} 날짜를 입력하세요 (예: 2025-07): ").strip()
+                try:
+                    date_input = input(f"{date_type} 날짜를 입력하세요 (예: 2025-07): ").strip()
+                except UnicodeDecodeError:
+                    date_input = input(f"{date_type} date (YYYY-MM): ").strip()
 
                 if not date_input:
                     print("빈 값은 입력할 수 없습니다. 다시 입력해주세요.")
@@ -2402,8 +3045,48 @@ def main():
     print("유연한 입국자 예측 시스템 시작")
     print("=" * 60)
 
-    # 예측기 초기화 (데이터는 __init__에서 자동 로드됨)
-    predictor = FlexiblePredictor()
+    # 🔥 코로나 데이터 처리 전략 선택
+    print("\n📊 코로나 데이터 처리 전략을 선택하세요:")
+    print("=" * 50)
+    print("  1. exclude  - 🚫 코로나 데이터 완전 제외 (최고 성능, MAE 57% 개선)")
+    print("  2. weighted - ⚖️  코로나 데이터 10% 가중치 적용 (기본값, 중간 성능)")
+    print("  3. include  - 📊 모든 데이터 포함 (기존 방식)")
+    print("=" * 50)
+
+    while True:
+        try:
+            choice = input("선택하세요 (1-3, 기본값 2): ").strip()
+
+            if not choice:  # 엔터만 누른 경우
+                covid_strategy = "weighted"
+                print("⚖️ 기본값 선택: weighted (10% 가중치)")
+                break
+            elif choice == "1":
+                covid_strategy = "exclude"
+                print("🚫 선택됨: exclude (코로나 데이터 완전 제외)")
+                break
+            elif choice == "2":
+                covid_strategy = "weighted"
+                print("⚖️ 선택됨: weighted (10% 가중치)")
+                break
+            elif choice == "3":
+                covid_strategy = "include"
+                print("📊 선택됨: include (모든 데이터 포함)")
+                break
+            else:
+                print("❌ 잘못된 입력입니다. 1-3 중에서 선택하세요.")
+                continue
+        except KeyboardInterrupt:
+            print("\n프로그램을 종료합니다.")
+            return
+        except Exception as e:
+            print(f"입력 오류: {e}")
+            continue
+
+    print("=" * 60)
+
+    # 예측기 초기화 (선택된 전략으로)
+    predictor = FlexiblePredictor(covid_strategy=covid_strategy)
 
     # 데이터 로드 확인
     if predictor.data is None or len(predictor.data) == 0:
