@@ -9,6 +9,36 @@ import os
 
 from prophet_predictor import predict_prophet
 from xgboost_predictor import predict_xgb
+from lstm_predictor import predict_lstm
+
+# --- 코로나 구간 평균 대체 함수 (위 코드 참조) ---
+def process_covid_mean(df, country=None, purpose=None):
+    df2 = df.copy()
+    if 'ds' not in df2.columns:
+        df2['ds'] = pd.to_datetime(df2['연도'].astype(str) + df2['월'].astype(str).str.zfill(2), format='%Y%m')
+    covid_mask = (df2['연도'] >= 2020) & (df2['연도'] <= 2022)
+    base_mask = ~covid_mask
+    group_cols = []
+    if country:
+        group_cols.append('국적')
+    if purpose:
+        group_cols.append('목적')
+    if group_cols:
+        means = df2[base_mask].groupby(group_cols)['입국자수'].mean().reset_index()
+        def replace_func(row):
+            if covid_mask.loc[row.name]:
+                filt = (means[group_cols[0]] == row[group_cols[0]])
+                if len(group_cols) == 2:
+                    filt &= (means[group_cols[1]] == row[group_cols[1]])
+                v = means.loc[filt, '입국자수']
+                return v.iloc[0] if not v.empty else row['입국자수']
+            else:
+                return row['입국자수']
+        df2['입국자수'] = df2.apply(replace_func, axis=1)
+    else:
+        mean_val = df2[base_mask]['입국자수'].mean()
+        df2.loc[covid_mask, '입국자수'] = mean_val
+    return df2
 
 # ----- 폰트 세팅 -----
 def set_korean_font():
@@ -82,77 +112,95 @@ def interpret_mape(mape):
     elif mape < 0.2: return "▲ 준수"
     else: return "❗오차 큼"
 
-def plot_all(df, country, purpose, date, result_prophet, result_xgb):
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    import matplotlib.ticker as ticker
-
+def plot_all(df, country, purpose, date, result_prophet, result_xgb, result_lstm):
     plt.figure(figsize=(18,7))
+    # 코로나 구간 음영
     plt.axvspan(pd.Timestamp('2020-01-01'), pd.Timestamp('2022-12-01'),
                 color='pink', alpha=0.13, label="코로나 구간(2020~2022)")
 
-    # 실측 방문자수
     real_df = result_prophet['실제_시계열']
     plt.plot(real_df['ds'], real_df['입국자수'], color='black', linewidth=2, label='실제 입국자수')
 
-    # Prophet 전체/예측(장래)
+    # Prophet 전체/장래
     prophet_df = result_prophet['예측_시계열']
     plt.plot(prophet_df['ds'], prophet_df['yhat'], color='blue', linewidth=2, label='Prophet 예측(전체)')
-    last_real = real_df['ds'].max()
-    future_prophet = prophet_df[prophet_df['ds'] > last_real]
-    if not future_prophet.empty:
-        plt.plot(future_prophet['ds'], future_prophet['yhat'], color='orange', linewidth=2, linestyle='--', label='Prophet 예측(장래)')
-        plt.scatter(future_prophet['ds'].iloc[-1], future_prophet['yhat'].iloc[-1], color='orange', marker='o', s=120, label=None)
-        plt.text(future_prophet['ds'].iloc[-1], future_prophet['yhat'].iloc[-1],
-                 f"{int(future_prophet['yhat'].iloc[-1]):,}", color='orange', fontsize=14, fontweight='bold', va='bottom')
+    future = prophet_df[prophet_df['ds'] > real_df['ds'].max()]
+    if not future.empty:
+        plt.plot(future['ds'], future['yhat'], color='orange', linestyle='--', linewidth=2, label='Prophet 예측(장래)')
 
-    # XGBoost 예측 시계열: 실측 이후만
+    # XGBoost 예측 시계열 (실측 종료점부터 예측점까지)
     if result_xgb.get('예측_시계열') is not None:
         xgb_pred_df = result_xgb['예측_시계열']
-        last_real = real_df['ds'].max()
-        future_xgb = xgb_pred_df[xgb_pred_df['ds'] > last_real]
-        if not future_xgb.empty:
-            plt.plot(future_xgb['ds'], future_xgb['입국자수'], color='green', linewidth=2, linestyle=':', label='XGBoost 예측(장래)')
-            plt.scatter(future_xgb['ds'].iloc[-1], future_xgb['입국자수'].iloc[-1], color='green', marker='D', s=120, label=None)
-            plt.text(future_xgb['ds'].iloc[-1], future_xgb['입국자수'].iloc[-1],
-                     f"{int(future_xgb['입국자수'].iloc[-1]):,}", color='green', fontsize=14, fontweight='bold', va='bottom')
+        last_real_ds = real_df['ds'].max()
+        xgb_pred_zone = xgb_pred_df[xgb_pred_df['ds'] >= last_real_ds]
+        if not xgb_pred_zone.empty:
+            plt.plot(xgb_pred_zone['ds'], xgb_pred_zone['입국자수'],
+                     color='green', linewidth=2, linestyle='-', label='XGBoost 예측 시계열')
+            plt.scatter([xgb_pred_zone['ds'].iloc[-1]], [xgb_pred_zone['입국자수'].iloc[-1]],
+                        color='green', marker='D', s=130, label=None)
+            plt.text(xgb_pred_zone['ds'].iloc[-1], xgb_pred_zone['입국자수'].iloc[-1],
+                     f"{int(xgb_pred_zone['입국자수'].iloc[-1]):,}", color='green', fontsize=14, fontweight='bold', va='bottom')
+
+    # LSTM 예측 시계열
+    if result_lstm.get('예측_시계열') is not None:
+        lstm_pred_df = result_lstm['예측_시계열']
+        last_real_ds = real_df['ds'].max()
+        lstm_pred_zone = lstm_pred_df[lstm_pred_df['ds'] >= last_real_ds]
+        if not lstm_pred_zone.empty:
+            plt.plot(lstm_pred_zone['ds'], lstm_pred_zone['입국자수'],
+                     color='purple', linewidth=2, linestyle=':', label='LSTM 예측(연장)')
+            plt.scatter([lstm_pred_zone['ds'].iloc[-1]], [lstm_pred_zone['입국자수'].iloc[-1]],
+                        color='purple', marker='^', s=130, label=None)
+            plt.text(lstm_pred_zone['ds'].iloc[-1], lstm_pred_zone['입국자수'].iloc[-1],
+                     f"{int(lstm_pred_zone['입국자수'].iloc[-1]):,}", color='purple', fontsize=14, fontweight='bold', va='bottom')
 
     # Prophet 타겟
     if date and result_prophet.get('예측값') is not None:
         target_x = pd.to_datetime(date, format='%Y%m')
-        plt.scatter([target_x], [result_prophet['예측값']], color='red', s=180, label='Prophet 예측 Target', zorder=10)
+        plt.scatter([target_x], [result_prophet['예측값']], color='red', s=150, label='예측 Target', zorder=10)
         plt.text(target_x, result_prophet['예측값'], f"{int(result_prophet['예측값']):,}", color='red',
                  fontsize=16, fontweight='bold', va='bottom')
 
-    # X축/ Y축 설정
+    # X축: 1년 단위
     ax = plt.gca()
     ax.xaxis.set_major_locator(mdates.YearLocator(1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
+    # Y축: 10만 단위 or 5천 단위
     y_max = max(real_df['입국자수'].max(),
-                prophet_df['yhat'].max() if not prophet_df.empty else 0,
-                result_xgb.get('예측값', 0) or 0)
-    step = 100_000 if y_max > 100_000 else 5000
-    label_fmt = '{:,.0f}'
+                prophet_df['yhat'].max(),
+                result_xgb.get('예측값', 0) or 0,
+                result_lstm.get('예측값', 0) or 0)
+    if y_max > 100_000:
+        step = 100_000
+        label_fmt = '{:,.0f}'
+    else:
+        step = 5000
+        label_fmt = '{:,.0f}'
     ax.yaxis.set_major_locator(ticker.MultipleLocator(step))
     ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: label_fmt.format(x)))
 
     plt.xlabel("연도")
     plt.ylabel("입국자 수")
     plt.legend(fontsize=13)
-    plt.title(f"외국인 입국자수 예측(Prophet, XGBoost)\n{country or '전체'} - {purpose or '전체'} - {date} 예측", fontsize=21)
+    plt.title(f"외국인 입국자수 예측(코로나=평균대체)\n{country or '전체'} - {purpose or '전체'} - {date} 예측", fontsize=21)
     plt.tight_layout()
     plt.show()
 
-
 # ========== main ==========
+
 if __name__ == "__main__":
     print("⚡외국인 입국자 예측 프로그램")
     country, purpose, date = get_user_input()
 
-    result_prophet = predict_prophet(df, country, purpose, date)
-    result_xgb = predict_xgb(df, country, purpose, date)
+    # 코로나 구간 평균 대체
+    df_proc = process_covid_mean(df, country, purpose)
 
-    plot_all(df, country, purpose, date, result_prophet, result_xgb)
+    result_prophet = predict_prophet(df_proc, country, purpose, date)
+    result_xgb = predict_xgb(df_proc, country, purpose, date)
+    result_lstm = predict_lstm(df_proc, country, purpose, date)
+
+    plot_all(df_proc, country, purpose, date, result_prophet, result_xgb, result_lstm)
 
     print(f"\n[Prophet] 예측값: {result_prophet.get('예측값', 'N/A'):,}")
     print("  └ RMSE: N/A, MAPE: N/A, R2: N/A → Prophet는 미래 오차 없음")
@@ -162,3 +210,9 @@ if __name__ == "__main__":
     mape = result_xgb.get('MAPE', 'N/A')
     r2 = result_xgb.get('R2', 'N/A')
     print(f"  └ RMSE: {rmse if isinstance(rmse,float) else rmse}, MAPE: {mape if isinstance(mape,float) else mape}, R2: {r2 if isinstance(r2,float) else r2} → {interpret_mape(mape) if mape!='N/A' else ''}")
+
+    print(f"\n[LSTM] 예측값: {result_lstm.get('예측값', 'N/A'):,}")
+    rmse = result_lstm.get('RMSE', 'N/A')
+    mae = result_lstm.get('MAE', 'N/A')
+    mape = result_lstm.get('MAPE', 'N/A')
+    print(f"  └ RMSE: {rmse if isinstance(rmse,float) else rmse}, MAE: {mae if isinstance(mae,float) else mae}, MAPE: {mape if isinstance(mape,float) else mape} → {interpret_mape(mape) if mape!='N/A' else ''}")

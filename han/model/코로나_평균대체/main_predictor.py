@@ -83,58 +83,55 @@ def interpret_mape(mape):
     else: return "❗오차 큼"
 
 def plot_all(df, country, purpose, date, result_prophet, result_xgb):
-    import matplotlib.pyplot as plt
-    import matplotlib.dates as mdates
-    import matplotlib.ticker as ticker
-
     plt.figure(figsize=(18,7))
+    # 코로나 구간 음영
     plt.axvspan(pd.Timestamp('2020-01-01'), pd.Timestamp('2022-12-01'),
                 color='pink', alpha=0.13, label="코로나 구간(2020~2022)")
 
-    # 실측 방문자수
+    # Prophet 실측/예측 전체
     real_df = result_prophet['실제_시계열']
-    plt.plot(real_df['ds'], real_df['입국자수'], color='black', linewidth=2, label='실제 입국자수')
-
-    # Prophet 전체/예측(장래)
     prophet_df = result_prophet['예측_시계열']
+    plt.plot(real_df['ds'], real_df['입국자수'], color='black', linewidth=2, label='실제 입국자수')
     plt.plot(prophet_df['ds'], prophet_df['yhat'], color='blue', linewidth=2, label='Prophet 예측(전체)')
-    last_real = real_df['ds'].max()
-    future_prophet = prophet_df[prophet_df['ds'] > last_real]
-    if not future_prophet.empty:
-        plt.plot(future_prophet['ds'], future_prophet['yhat'], color='orange', linewidth=2, linestyle='--', label='Prophet 예측(장래)')
-        plt.scatter(future_prophet['ds'].iloc[-1], future_prophet['yhat'].iloc[-1], color='orange', marker='o', s=120, label=None)
-        plt.text(future_prophet['ds'].iloc[-1], future_prophet['yhat'].iloc[-1],
-                 f"{int(future_prophet['yhat'].iloc[-1]):,}", color='orange', fontsize=14, fontweight='bold', va='bottom')
+    future = prophet_df[prophet_df['ds'] > real_df['ds'].max()]
+    if not future.empty:
+        plt.plot(future['ds'], future['yhat'], color='orange', linestyle='--', linewidth=2, label='Prophet 예측(장래)')
 
-    # XGBoost 예측 시계열: 실측 이후만
-    if result_xgb.get('예측_시계열') is not None:
-        xgb_pred_df = result_xgb['예측_시계열']
-        last_real = real_df['ds'].max()
-        future_xgb = xgb_pred_df[xgb_pred_df['ds'] > last_real]
-        if not future_xgb.empty:
-            plt.plot(future_xgb['ds'], future_xgb['입국자수'], color='green', linewidth=2, linestyle=':', label='XGBoost 예측(장래)')
-            plt.scatter(future_xgb['ds'].iloc[-1], future_xgb['입국자수'].iloc[-1], color='green', marker='D', s=120, label=None)
-            plt.text(future_xgb['ds'].iloc[-1], future_xgb['입국자수'].iloc[-1],
-                     f"{int(future_xgb['입국자수'].iloc[-1]):,}", color='green', fontsize=14, fontweight='bold', va='bottom')
+    # XGBoost: 실측 끝점 ~ 예측까지 선/점 표시
+    xgb_real = result_xgb['실제_시계열']
+    xgb_pred = result_xgb['예측_시계열']
+    # 실측 데이터 라인
+    plt.plot(xgb_real['ds'], xgb_real['입국자수'], color='green', alpha=0.5, label='XGBoost 학습데이터')
+    # 실측 마지막점~예측값까지 라인
+    xgb_bridge_x = [xgb_real['ds'].iloc[-1], xgb_pred['ds'].iloc[0]]
+    xgb_bridge_y = [xgb_real['입국자수'].iloc[-1], xgb_pred['입국자수'].iloc[0]]
+    plt.plot(xgb_bridge_x, xgb_bridge_y, color='green', linewidth=2, linestyle='-', label='XGBoost 예측 연결선')
+    plt.scatter(xgb_pred['ds'], xgb_pred['입국자수'], color='green', marker='D', s=130, label='XGBoost 예측값')
+    plt.text(xgb_pred['ds'].iloc[0], xgb_pred['입국자수'].iloc[0], f"{int(xgb_pred['입국자수'].iloc[0]):,}",
+             color='green', fontsize=14, fontweight='bold', va='bottom')
 
     # Prophet 타겟
     if date and result_prophet.get('예측값') is not None:
         target_x = pd.to_datetime(date, format='%Y%m')
-        plt.scatter([target_x], [result_prophet['예측값']], color='red', s=180, label='Prophet 예측 Target', zorder=10)
+        plt.scatter([target_x], [result_prophet['예측값']], color='red', s=150, label='Prophet 예측 Target', zorder=10)
         plt.text(target_x, result_prophet['예측값'], f"{int(result_prophet['예측값']):,}", color='red',
                  fontsize=16, fontweight='bold', va='bottom')
 
-    # X축/ Y축 설정
+    # X축: 1년 단위, Y축: 10만/5천 단위, 그리드 추가
     ax = plt.gca()
     ax.xaxis.set_major_locator(mdates.YearLocator(1))
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y'))
+
     y_max = max(real_df['입국자수'].max(),
-                prophet_df['yhat'].max() if not prophet_df.empty else 0,
-                result_xgb.get('예측값', 0) or 0)
-    step = 100_000 if y_max > 100_000 else 5000
-    label_fmt = '{:,.0f}'
+                prophet_df['yhat'].max(),
+                xgb_pred['입국자수'].iloc[0])
+    if y_max > 100_000:
+        step = 100_000
+    else:
+        step = 5000
     ax.yaxis.set_major_locator(ticker.MultipleLocator(step))
-    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: label_fmt.format(x)))
+    ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: '{:,.0f}'.format(x)))
+    ax.grid(True, which='both', axis='both', color='grey', linestyle=':', alpha=0.3)
 
     plt.xlabel("연도")
     plt.ylabel("입국자 수")
@@ -142,7 +139,6 @@ def plot_all(df, country, purpose, date, result_prophet, result_xgb):
     plt.title(f"외국인 입국자수 예측(Prophet, XGBoost)\n{country or '전체'} - {purpose or '전체'} - {date} 예측", fontsize=21)
     plt.tight_layout()
     plt.show()
-
 
 # ========== main ==========
 if __name__ == "__main__":
