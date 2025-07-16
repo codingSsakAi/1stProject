@@ -7,9 +7,9 @@ from utils import fill_covid_with_mean
 
 def create_features(df):
     df = df.sort_values('ds')
-    for lag in [1, 3, 6, 12]:
+    for lag in [1,3,6,12]:
         df[f'lag_{lag}'] = df['입국자수'].shift(lag)
-    for w in [3, 6, 12]:
+    for w in [3,6,12]:
         df[f'roll_mean_{w}'] = df['입국자수'].rolling(w).mean()
     df['last_year'] = df['입국자수'].shift(12)
     df['월'] = df['ds'].dt.month
@@ -46,62 +46,43 @@ def predict_xgb(df, country, purpose, predict_ym):
     y_train, y_val = y_scaled[:split_idx], y_scaled[split_idx:]
     model = XGBRegressor(n_estimators=300, max_depth=6, learning_rate=0.07, random_state=42)
     model.fit(X_train, y_train)
-    # 검증값
     val_pred = model.predict(X_val)
     val_pred_rescaled = scaler_y.inverse_transform(val_pred.reshape(-1,1)).flatten()
     y_val_rescaled = scaler_y.inverse_transform(y_val.reshape(-1,1)).flatten()
     rmse = mean_squared_error(y_val_rescaled, val_pred_rescaled, squared=False)
     mape = mean_absolute_percentage_error(y_val_rescaled, val_pred_rescaled)
     r2 = r2_score(y_val_rescaled, val_pred_rescaled)
-
-    # [1] 미래 예측(연속 시계열)
+    # 미래 예측
     last_row = base_df.iloc[-1:].copy()
-    last_date = last_row['ds'].iloc[0]
-    future_end = pd.to_datetime(predict_ym, format='%Y%m')
-    n_future = (future_end.year - last_date.year) * 12 + (future_end.month - last_date.month)
-    pred_dates = list(base_df['ds'])
-    pred_values = list(base_df['입국자수'])
-
-    cur_base_df = base_df.copy()
-    for i in range(n_future):
-        next_date = last_date + pd.DateOffset(months=i+1)
-        # 피처 갱신
-        tmp = last_row.copy()
-        tmp['ds'] = next_date
-        tmp['월'] = next_date.month
-        tmp['연도'] = next_date.year
-        tmp['성수기'] = int(next_date.month in [7,8,12])
-        tmp['명절'] = int(next_date.month in [1,2,9,10])
-        tmp['코로나'] = int(next_date.year >= 2020)
-        tmp['연말'] = int(next_date.month == 12)
-        tmp['연초'] = int(next_date.month == 1)
-        # lag/rolling 갱신
-        for lag in [1,3,6,12]:
-            tmp[f'lag_{lag}'] = pred_values[-lag]
-        for w in [3,6,12]:
-            tmp[f'roll_mean_{w}'] = np.mean(pred_values[-w:])
-        tmp['last_year'] = pred_values[-12] if len(pred_values) >= 12 else pred_values[0]
-        # 순서
-        feat_df = tmp.drop(['ds','입국자수'], axis=1)
-        feat_df = feat_df[feature_cols]
-        # 예측
-        feat_scaled = scaler_x.transform(feat_df)
-        y_pred_scaled = model.predict(feat_scaled)[0]
-        y_pred = scaler_y.inverse_transform([[y_pred_scaled]])[0,0]
-        pred_dates.append(next_date)
-        pred_values.append(y_pred)
-        # last_row 갱신
-        last_row = tmp.copy()
-        last_row['입국자수'] = y_pred
-
-    # 미래 예측값(사용자 지정 month)
-    pred_value = pred_values[-1]
-    pred_df = pd.DataFrame({'ds': pred_dates, '입국자수': pred_values})
+    pred_date = pd.to_datetime(predict_ym, format='%Y%m')
+    month, year = pred_date.month, pred_date.year
+    for lag in [1,3,6,12]:
+        last_row[f'lag_{lag}'] = base_df['입국자수'].iloc[-lag]
+    for w in [3,6,12]:
+        last_row[f'roll_mean_{w}'] = base_df['입국자수'].iloc[-w:].mean()
+    last_row['last_year'] = base_df['입국자수'].iloc[-12]
+    last_row['월'] = month
+    last_row['연도'] = year
+    last_row['성수기'] = int(month in [7,8,12])
+    last_row['명절'] = int(month in [1,2,9,10])
+    last_row['코로나'] = int(year >= 2020)
+    last_row['연말'] = int(month == 12)
+    last_row['연초'] = int(month == 1)
+    feat_df = last_row.drop(['ds','입국자수'], axis=1)
+    feat_df = feat_df[feature_cols]
+    feature_row_scaled = scaler_x.transform(feat_df)
+    future_pred_scaled = model.predict(feature_row_scaled)[0]
+    future_pred = scaler_y.inverse_transform([[future_pred_scaled]])[0,0]
+    # 미래 예측 시계열
+    pred_series = pd.DataFrame({
+        'ds':[pred_date],
+        '입국자수':[future_pred]
+    })
     return {
-        '예측값': pred_value,
-        '실제_시계열': base_df[['ds','입국자수']],
-        '예측_시계열': pred_df,
+        '예측값': future_pred,
         'RMSE': rmse,
         'MAPE': mape,
-        'R2': r2
+        'R2': r2,
+        '예측_시계열': pred_series,
+        '실제_시계열': base_df
     }

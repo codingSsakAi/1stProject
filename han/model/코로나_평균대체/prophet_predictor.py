@@ -31,12 +31,8 @@ def get_holidays():
     return holidays
 
 def predict_prophet(df, country, purpose, predict_ym):
-    # 전체 데이터 → 학습에 사용할 데이터만 추출(코로나 제외)
     data = preprocess_data(df.copy(), country, purpose)
     holidays = get_holidays()
-    # **코로나 기간(2020~2022) 제외한 데이터만 Prophet에 학습**
-    train_data = data[(data['ds'] < '2020-01-01') | (data['ds'] > '2022-12-01')].reset_index(drop=True)
-
     model = Prophet(
         yearly_seasonality=True,
         holidays=holidays,
@@ -47,7 +43,7 @@ def predict_prophet(df, country, purpose, predict_ym):
     for reg in ['성수기','명절','코로나','연초','연말']:
         if reg != '명절':
             model.add_regressor(reg)
-    model.fit(train_data)
+    model.fit(data)
     last = data['ds'].max()
     periods = 0
     if predict_ym:
@@ -67,7 +63,6 @@ def predict_prophet(df, country, purpose, predict_ym):
     forecast = model.predict(future)
     pred_row = forecast[forecast['ds'] == pd.to_datetime(predict_ym, format='%Y%m')] if predict_ym else pd.DataFrame()
     pred = pred_row['yhat'].values[0] if not pred_row.empty else None
-    # 실제 전체 시계열(코로나 포함) vs Prophet 예측(코로나 패턴 미반영)
     actual_df = data.rename(columns={'y': '입국자수'})
     forecast = forecast.rename(columns={'yhat': 'yhat'})
     return {
