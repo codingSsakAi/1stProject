@@ -250,8 +250,8 @@ class FlexiblePredictor:
             # 성수기(여름/겨울)에는 더 큰 변동성
             if month in [7, 8, 12, 1]:
                 seasonal_noise[i] = base_noise * 1.5
-            else:
-                seasonal_noise[i] = base_noise
+        else:
+            seasonal_noise[i] = base_noise
 
         noisy_values = original_values * (1 + seasonal_noise)
         augmented["입국자수"] = np.maximum(noisy_values, 0)
@@ -863,7 +863,7 @@ class FlexiblePredictor:
         return True
 
     def predict_future_months(self, nationality, purpose, target_months):
-        """실제 패턴 반영 예측 (연속성 보정 포함)"""
+        """실제 패턴 반영 예측 (연속성 보정 포함) - 개선된 버전"""
         key = f"{nationality}_{purpose}"
 
         if key not in self.models:
@@ -881,8 +881,14 @@ class FlexiblePredictor:
             .sort_values("날짜")
         )
 
-        # 계절성 패턴 추출
-        seasonal_pattern = self.extract_seasonal_pattern(combo_data)
+        # 계절성 패턴 추출 - 개선된 방식
+        seasonal_pattern = self.extract_improved_seasonal_pattern(combo_data)
+
+        # 최근 트렌드 계산 (최근 12개월 평균 변화율)
+        recent_trend = self.calculate_recent_trend(combo_data)
+
+        # 변동성 패턴 분석 (실제 데이터의 월별 변동성)
+        volatility_pattern = self.analyze_volatility_pattern(combo_data)
 
         # 특성 준비
         features = self.create_advanced_features(combo_data)
@@ -894,7 +900,11 @@ class FlexiblePredictor:
         last_actual_value = combo_data["입국자수"].iloc[-1]
         last_actual_date = combo_data["날짜"].iloc[-1]
 
+        # 최근 3개월 평균값 계산 (안정적인 기준값)
+        recent_3months_avg = combo_data["입국자수"].tail(3).mean()
+
         print(f"연속성 보정 기준: {last_actual_date.strftime('%Y-%m')} = {last_actual_value:,}명")
+        print(f"최근 3개월 평균: {recent_3months_avg:,}명")
 
         predictions = []
         sequence = current_sequence.copy()
@@ -907,7 +917,7 @@ class FlexiblePredictor:
         )
 
         # 점진적 변화를 위한 연속성 강도 (간격이 클수록 연속성 약화)
-        continuity_strength = max(0.3, 1.0 - (months_gap * 0.1))
+        continuity_strength = max(0.4, 1.0 - (months_gap * 0.08))  # 더 강한 연속성
         print(f"연속성 강도: {continuity_strength:.2f} (간격: {months_gap}개월)")
 
         for idx, target_month in enumerate(target_months):
@@ -930,54 +940,68 @@ class FlexiblePredictor:
                 dummy_data[0, 0] = pred_scaled
                 pred_value = scaler.inverse_transform(dummy_data)[0, 0]
 
-                # 🔥 연속성 보정 적용 (첫 번째 예측값에 강하게 적용)
+                # 🔥 강화된 연속성 보정 적용
                 if idx == 0:
-                    # 첫 번째 예측값은 실제값과 연속적으로 연결
-                    continuity_factor = continuity_strength
+                    # 첫 번째 예측값은 실제값과 매우 연속적으로 연결
+                    continuity_factor = continuity_strength * 0.9  # 90%까지 연속성 적용
                     pred_value = (pred_value * (1 - continuity_factor)) + (
                         last_actual_value * continuity_factor
                     )
-                elif idx == 1:
-                    # 두 번째 예측값은 약간의 연속성 적용
-                    continuity_factor = continuity_strength * 0.5
-                    if predictions:
-                        prev_value = predictions[-1]["value"]
-                        pred_value = (pred_value * (1 - continuity_factor)) + (
-                            prev_value * continuity_factor
-                        )
+                elif idx <= 2:
+                    # 처음 3개월은 강한 연속성 적용
+                    continuity_factor = continuity_strength * (0.6 - idx * 0.1)  # 60%, 50%, 40%
+                    prev_value = predictions[-1]["value"]
+                    pred_value = (pred_value * (1 - continuity_factor)) + (
+                        prev_value * continuity_factor
+                    )
+                else:
+                    # 이후에는 점진적으로 연속성 약화
+                    continuity_factor = continuity_strength * max(0.1, 0.4 - (idx - 2) * 0.05)
+                    prev_value = predictions[-1]["value"]
+                    pred_value = (pred_value * (1 - continuity_factor)) + (
+                        prev_value * continuity_factor
+                    )
 
-                # 계절성 보정 적용
+                # 🔥 개선된 계절성 보정 적용
                 month = target_date.month
                 if seasonal_pattern and month in seasonal_pattern:
                     seasonal_factor = seasonal_pattern[month]
-                    overall_avg = combo_data["입국자수"].mean()
-                    # 계절성 보정 강도 조정 (±15% 범위)
-                    if seasonal_factor > overall_avg:
-                        seasonal_adjustment = 1.0 + (seasonal_factor / overall_avg - 1) * 0.15
-                    else:
-                        seasonal_adjustment = 1.0 - (1 - seasonal_factor / overall_avg) * 0.15
+                    # 계절성 보정을 더 강하게 적용 (±25% 범위)
+                    seasonal_adjustment = 1.0 + (seasonal_factor - 1.0) * 0.25
                     pred_value *= seasonal_adjustment
 
-                # 🔥 자연스러운 변동 추가 (연속성 고려)
-                # 초기 몇 개월은 변동성을 줄이고, 이후 점진적으로 증가
-                if idx == 0:
-                    variation_range = 0.02  # ±2% (첫 번째는 매우 안정적)
-                elif idx == 1:
-                    variation_range = 0.05  # ±5%
-                else:
-                    variation_range = 0.08  # ±8% (나중에는 더 자연스러운 변동)
+                # 🔥 트렌드 반영 (장기적 증가/감소 패턴)
+                if recent_trend != 0:
+                    trend_factor = 1.0 + (recent_trend * idx * 0.1)  # 시간이 지날수록 트렌드 강화
+                    pred_value *= trend_factor
 
-                natural_variation = np.random.uniform(1 - variation_range, 1 + variation_range)
+                # 🔥 개선된 자연스러운 변동 추가
+                month_volatility = volatility_pattern.get(month, 0.08)  # 해당 월의 변동성 사용
+
+                # 점진적 변동성 증가 (시간이 지날수록 불확실성 증가)
+                base_volatility = month_volatility
+                if idx == 0:
+                    variation_range = base_volatility * 0.3  # 첫 번째는 매우 안정적
+                elif idx <= 2:
+                    variation_range = base_volatility * 0.6  # 초기 3개월은 안정적
+                else:
+                    variation_range = base_volatility * min(
+                        1.5, 0.8 + (idx - 2) * 0.1
+                    )  # 점진적 증가
+
+                # 정규분포 기반 변동 (더 자연스러운 변동)
+                natural_variation = np.random.normal(1.0, variation_range / 3)
+                natural_variation = max(0.7, min(1.3, natural_variation))  # 극단적 변동 제한
                 pred_value *= natural_variation
 
-                pred_value = max(0, int(pred_value))
+                # 🔥 최소값 보장 (0이 되지 않도록)
+                pred_value = max(1, int(pred_value))
 
                 predictions.append(
                     {"month": target_month, "value": pred_value, "type": "predicted"}
                 )
 
-                # 시퀀스 업데이트 (실제 패턴 반영)
-                # 새로운 특성 벡터 생성 (계절성 등 반영)
+                # 🔥 개선된 시퀀스 업데이트
                 new_features = np.zeros(features.shape[1])
                 new_features[0] = pred_scaled  # 예측된 입국자수
 
@@ -1002,6 +1026,11 @@ class FlexiblePredictor:
                         season_idx = features.columns.get_loc(season_col)
                         new_features[season_idx] = 1 if s == season else 0
 
+                # 🔥 트렌드 특성 추가 (시간에 따른 변화 반영)
+                if "트렌드" in features.columns:
+                    trend_idx = features.columns.get_loc("트렌드")
+                    new_features[trend_idx] = idx + 1  # 예측 시점
+
                 # 시퀀스 업데이트 (슬라이딩 윈도우)
                 sequence = np.roll(sequence, -1, axis=0)
                 sequence[-1] = new_features
@@ -1015,6 +1044,66 @@ class FlexiblePredictor:
             monthly_data = data[data["월"] == month]
             seasonal_pattern[month] = monthly_data["입국자수"].mean()
         return seasonal_pattern
+
+    def extract_improved_seasonal_pattern(self, data):
+        """개선된 계절성 패턴 추출 - 정규화된 계절성 팩터"""
+        if len(data) < 12:
+            return {}
+
+        seasonal_pattern = {}
+        overall_avg = data["입국자수"].mean()
+
+        for month in range(1, 13):
+            monthly_data = data[data["월"] == month]
+            if len(monthly_data) > 0:
+                month_avg = monthly_data["입국자수"].mean()
+                # 전체 평균 대비 비율로 계산 (1.0 = 평균, 1.2 = 20% 높음)
+                seasonal_factor = month_avg / overall_avg if overall_avg > 0 else 1.0
+                seasonal_pattern[month] = seasonal_factor
+            else:
+                seasonal_pattern[month] = 1.0
+
+        return seasonal_pattern
+
+    def calculate_recent_trend(self, data):
+        """최근 트렌드 계산 - 최근 12개월 평균 변화율"""
+        if len(data) < 12:
+            return 0.0
+
+        recent_12months = data.tail(12)
+        if len(recent_12months) < 6:
+            return 0.0
+
+        # 선형 회귀를 통한 트렌드 계산
+        x = np.arange(len(recent_12months))
+        y = recent_12months["입국자수"].values
+
+        # 최소제곱법으로 기울기 계산
+        if len(x) > 1:
+            slope = np.polyfit(x, y, 1)[0]
+            avg_value = np.mean(y)
+            # 월 평균 변화율로 정규화
+            trend_rate = slope / avg_value if avg_value > 0 else 0.0
+            return max(-0.1, min(0.1, trend_rate))  # ±10% 범위로 제한
+
+        return 0.0
+
+    def analyze_volatility_pattern(self, data):
+        """변동성 패턴 분석 - 월별 변동성 계산"""
+        volatility_pattern = {}
+
+        for month in range(1, 13):
+            monthly_data = data[data["월"] == month]
+            if len(monthly_data) > 1:
+                # 월별 데이터의 표준편차를 평균으로 나눈 변동계수
+                std_dev = monthly_data["입국자수"].std()
+                mean_val = monthly_data["입국자수"].mean()
+                volatility = std_dev / mean_val if mean_val > 0 else 0.08
+                volatility_pattern[month] = max(0.02, min(0.2, volatility))  # 2%~20% 범위
+            else:
+                volatility_pattern[month] = 0.08  # 기본값 8%
+
+        return volatility_pattern
 
     def get_season_number(self, month):
         """월을 계절로 변환"""
@@ -1486,20 +1575,20 @@ class FlexiblePredictor:
                         markeredgewidth=3,
                         markeredgecolor=color,
                     )
-            else:
-                # 기타 목적: 옅은 색상, 얇은 선, 반투명
-                ax_overview.plot(
-                    display_data["날짜"],
-                    display_data["입국자수"],
-                    color=color,
-                    linewidth=3,  # 얇은 선
-                    label=f"{purpose}",
-                    alpha=0.5,  # 반투명
-                    zorder=3,  # 중간 레이어
-                    marker="o",
-                    markersize=4,
-                    linestyle="-",
-                )
+                else:
+                    # 기타 목적: 옅은 색상, 얇은 선, 반투명
+                    ax_overview.plot(
+                        display_data["날짜"],
+                        display_data["입국자수"],
+                        color=color,
+                        linewidth=3,  # 얇은 선
+                        label=f"{purpose}",
+                        alpha=0.5,  # 반투명
+                        zorder=3,  # 중간 레이어
+                        marker="o",
+                        markersize=4,
+                        linestyle="-",
+                    )
 
         # 우측 Y축 목적들 그리기 (보조 목적들은 더 옅게)
         if ax_right and right_purposes:
@@ -1658,217 +1747,207 @@ class FlexiblePredictor:
                 last_actual_date = recent_data["날짜"].iloc[-1]
                 last_actual_value = recent_data["입국자수"].iloc[-1]
 
-                if connection_dates:
-                    first_pred_date = connection_dates[0]
-                    first_pred_value = connection_values[0]
-                elif pred_dates:
-                    first_pred_date = pred_dates[0]
-                    first_pred_value = pred_values[0]
-                else:
-                    first_pred_date = None
+            if connection_dates:
+                first_pred_date = connection_dates[0]
+                first_pred_value = connection_values[0]
+            elif pred_dates:
+                first_pred_date = pred_dates[0]
+                first_pred_value = pred_values[0]
+            else:
+                first_pred_date = None
 
-                if first_pred_date:
-                    # 🔥 매끄러운 연결을 위한 중간 포인트 생성
-                    time_diff = (first_pred_date - last_actual_date).days
-                    value_diff = first_pred_value - last_actual_value
+            if first_pred_date:
+                # 🔥 매끄러운 연결을 위한 중간 포인트 생성
+                time_diff = (first_pred_date - last_actual_date).days
+                value_diff = first_pred_value - last_actual_value
 
-                    # 월 간격 계산 (자연스러운 전환을 위해)
-                    months_gap = (first_pred_date.year - last_actual_date.year) * 12 + (
-                        first_pred_date.month - last_actual_date.month
+                # 월 간격 계산 (자연스러운 전환을 위해)
+                months_gap = (first_pred_date.year - last_actual_date.year) * 12 + (
+                    first_pred_date.month - last_actual_date.month
+                )
+
+                if months_gap <= 2:
+                    # 간격이 짧으면 중간 포인트 1개 추가
+                    mid_date = last_actual_date + pd.DateOffset(months=months_gap // 2 + 1)
+                    mid_value = last_actual_value + (value_diff * 0.6)  # 60% 지점에서 부드럽게 전환
+
+                    # 3점 곡선 연결 (실제값 → 중간점 → 예측값)
+                    ax.plot(
+                        [last_actual_date, mid_date, first_pred_date],
+                        [last_actual_value, mid_value, first_pred_value],
+                        color="#666666",
+                        linestyle="-",
+                        linewidth=4,
+                        alpha=0.8,
+                        label="실제-예측 연결(매끄러운)" if idx == 0 else "",
+                        zorder=3,
                     )
 
-                    if months_gap <= 2:
-                        # 간격이 짧으면 중간 포인트 1개 추가
-                        mid_date = last_actual_date + pd.DateOffset(months=months_gap // 2 + 1)
-                        mid_value = last_actual_value + (
-                            value_diff * 0.6
-                        )  # 60% 지점에서 부드럽게 전환
+                    # 중간 포인트 표시
+                    ax.plot(
+                        mid_date,
+                        mid_value,
+                        "o",
+                        color="#666666",
+                        markersize=8,
+                        alpha=0.7,
+                        zorder=3,
+                    )
 
-                        # 3점 곡선 연결 (실제값 → 중간점 → 예측값)
-                        ax.plot(
-                            [last_actual_date, mid_date, first_pred_date],
-                            [last_actual_value, mid_value, first_pred_value],
-                            color="#666666",
-                            linestyle="-",
-                            linewidth=4,
-                            alpha=0.8,
-                            label="실제-예측 연결(매끄러운)" if idx == 0 else "",
-                            zorder=3,
-                        )
+                elif months_gap <= 6:
+                    # 간격이 중간이면 중간 포인트 2개 추가
+                    mid1_date = last_actual_date + pd.DateOffset(months=months_gap // 3 + 1)
+                    mid2_date = last_actual_date + pd.DateOffset(months=(months_gap * 2) // 3 + 1)
 
-                        # 중간 포인트 표시
+                    mid1_value = last_actual_value + (value_diff * 0.4)  # 40% 지점
+                    mid2_value = last_actual_value + (value_diff * 0.75)  # 75% 지점
+
+                    # 4점 곡선 연결
+                    ax.plot(
+                        [last_actual_date, mid1_date, mid2_date, first_pred_date],
+                        [last_actual_value, mid1_value, mid2_value, first_pred_value],
+                        color="#666666",
+                        linestyle="-",
+                        linewidth=4,
+                        alpha=0.8,
+                        label="실제-예측 연결(매끄러운)" if idx == 0 else "",
+                        zorder=3,
+                    )
+
+                    # 중간 포인트들 표시
+                    for mid_date, mid_value in [
+                        (mid1_date, mid1_value),
+                        (mid2_date, mid2_value),
+                    ]:
                         ax.plot(
                             mid_date,
                             mid_value,
                             "o",
                             color="#666666",
-                            markersize=8,
-                            alpha=0.7,
+                            markersize=6,
+                            alpha=0.6,
                             zorder=3,
                         )
+                else:
+                    # 간격이 길면 점진적 연결 (여러 중간점)
+                    num_points = min(months_gap, 8)  # 최대 8개 중간점
 
-                    elif months_gap <= 6:
-                        # 간격이 중간이면 중간 포인트 2개 추가
-                        mid1_date = last_actual_date + pd.DateOffset(months=months_gap // 3 + 1)
-                        mid2_date = last_actual_date + pd.DateOffset(
-                            months=(months_gap * 2) // 3 + 1
-                        )
+                    connection_dates_list = []
+                    connection_values_list = []
 
-                        mid1_value = last_actual_value + (value_diff * 0.4)  # 40% 지점
-                        mid2_value = last_actual_value + (value_diff * 0.75)  # 75% 지점
+                    for i in range(1, num_points):
+                        ratio = i / num_points
+                        # 부드러운 전환을 위한 sigmoid 함수 적용
+                        smooth_ratio = 1 / (1 + np.exp(-6 * (ratio - 0.5)))
 
-                        # 4점 곡선 연결
-                        ax.plot(
-                            [last_actual_date, mid1_date, mid2_date, first_pred_date],
-                            [last_actual_value, mid1_value, mid2_value, first_pred_value],
-                            color="#666666",
-                            linestyle="-",
-                            linewidth=4,
-                            alpha=0.8,
-                            label="실제-예측 연결(매끄러운)" if idx == 0 else "",
-                            zorder=3,
-                        )
+                        conn_date = last_actual_date + pd.DateOffset(months=int(months_gap * ratio))
+                        conn_value = last_actual_value + (value_diff * smooth_ratio)
 
-                        # 중간 포인트들 표시
-                        for mid_date, mid_value in [
-                            (mid1_date, mid1_value),
-                            (mid2_date, mid2_value),
-                        ]:
-                            ax.plot(
-                                mid_date,
-                                mid_value,
-                                "o",
-                                color="#666666",
-                                markersize=6,
-                                alpha=0.6,
-                                zorder=3,
-                            )
-                    else:
-                        # 간격이 길면 점진적 연결 (여러 중간점)
-                        num_points = min(months_gap, 8)  # 최대 8개 중간점
+                        connection_dates_list.append(conn_date)
+                        connection_values_list.append(conn_value)
 
-                        connection_dates_list = []
-                        connection_values_list = []
+                    # 전체 연결선 그리기
+                    full_dates = [last_actual_date] + connection_dates_list + [first_pred_date]
+                    full_values = [last_actual_value] + connection_values_list + [first_pred_value]
 
-                        for i in range(1, num_points):
-                            ratio = i / num_points
-                            # 부드러운 전환을 위한 sigmoid 함수 적용
-                            smooth_ratio = 1 / (1 + np.exp(-6 * (ratio - 0.5)))
-
-                            conn_date = last_actual_date + pd.DateOffset(
-                                months=int(months_gap * ratio)
-                            )
-                            conn_value = last_actual_value + (value_diff * smooth_ratio)
-
-                            connection_dates_list.append(conn_date)
-                            connection_values_list.append(conn_value)
-
-                        # 전체 연결선 그리기
-                        full_dates = [last_actual_date] + connection_dates_list + [first_pred_date]
-                        full_values = (
-                            [last_actual_value] + connection_values_list + [first_pred_value]
-                        )
-
-                        ax.plot(
-                            full_dates,
-                            full_values,
-                            color="#666666",
-                            linestyle="-",
-                            linewidth=4,
-                            alpha=0.8,
-                            label="실제-예측 연결(매끄러운)" if idx == 0 else "",
-                            zorder=3,
-                        )
-
-                        # 중간 포인트들 표시 (일부만)
-                        for i, (conn_date, conn_value) in enumerate(
-                            zip(connection_dates_list, connection_values_list)
-                        ):
-                            if i % 2 == 0:  # 격개로 표시
-                                ax.plot(
-                                    conn_date,
-                                    conn_value,
-                                    "o",
-                                    color="#666666",
-                                    markersize=4,
-                                    alpha=0.5,
-                                    zorder=3,
-                                )
-
-                    # 🔥 연결 구간 하이라이트 (옅은 배경)
-                    ax.axvspan(
-                        last_actual_date,
-                        first_pred_date,
-                        alpha=0.08,
-                        color="orange",
-                        label="실제-예측 전환구간" if idx == 0 else "",
-                        zorder=1,
+                    ax.plot(
+                        full_dates,
+                        full_values,
+                        color="#666666",
+                        linestyle="-",
+                        linewidth=4,
+                        alpha=0.8,
+                        label="실제-예측 연결(매끄러운)" if idx == 0 else "",
+                        zorder=3,
                     )
 
-                    # 🔥 연결점 정보 표시
-                    if idx == 0:  # 첫 번째 그래프에만 표시
-                        # 실제값 끝점 강조
-                        ax.plot(
-                            last_actual_date,
-                            last_actual_value,
-                            "o",
-                            color="blue",
-                            markersize=12,
-                            markerfacecolor="lightblue",
-                            markeredgewidth=3,
-                            markeredgecolor="blue",
-                            label="실제값 마지막",
-                            zorder=4,
-                        )
+                    # 중간 포인트들 표시 (일부만)
+                    for i, (conn_date, conn_value) in enumerate(
+                        zip(connection_dates_list, connection_values_list)
+                    ):
+                        if i % 2 == 0:  # 격개로 표시
+                            ax.plot(
+                                conn_date,
+                                conn_value,
+                                "o",
+                                color="#666666",
+                                markersize=4,
+                                alpha=0.5,
+                                zorder=3,
+                            )
 
-                        # 예측값 시작점 강조
-                        ax.plot(
-                            first_pred_date,
-                            first_pred_value,
-                            "s",
-                            color="red",
-                            markersize=12,
-                            markerfacecolor="lightcoral",
-                            markeredgewidth=3,
-                            markeredgecolor="red",
-                            label="예측값 시작",
-                            zorder=4,
-                        )
+                # 🔥 연결 구간 하이라이트 (옅은 배경)
+                ax.axvspan(
+                    last_actual_date,
+                    first_pred_date,
+                    alpha=0.08,
+                    color="orange",
+                    label="실제-예측 전환구간" if idx == 0 else "",
+                    zorder=1,
+                )
 
-                        # 연결 정보 텍스트
-                        mid_date_for_text = last_actual_date + pd.DateOffset(months=months_gap // 2)
-                        mid_value_for_text = (last_actual_value + first_pred_value) / 2
+                # 🔥 연결점 정보 표시
+                if idx == 0:  # 첫 번째 그래프에만 표시
+                    # 실제값 끝점 강조
+                    ax.plot(
+                        last_actual_date,
+                        last_actual_value,
+                        "o",
+                        color="blue",
+                        markersize=12,
+                        markerfacecolor="lightblue",
+                        markeredgewidth=3,
+                        markeredgecolor="blue",
+                        label="실제값 마지막",
+                        zorder=4,
+                    )
 
-                        change_pct = (
-                            (first_pred_value - last_actual_value) / last_actual_value
-                        ) * 100
-                        change_text = f"변화: {change_pct:+.1f}%"
+                    # 예측값 시작점 강조
+                    ax.plot(
+                        first_pred_date,
+                        first_pred_value,
+                        "s",
+                        color="red",
+                        markersize=12,
+                        markerfacecolor="lightcoral",
+                        markeredgewidth=3,
+                        markeredgecolor="red",
+                        label="예측값 시작",
+                        zorder=4,
+                    )
 
-                        ax.annotate(
-                            change_text,
-                            xy=(mid_date_for_text, mid_value_for_text),
-                            xytext=(0, 20),
-                            textcoords="offset points",
-                            ha="center",
-                            va="bottom",
-                            fontsize=10,
-                            fontweight="bold",
-                            bbox=dict(
-                                boxstyle="round,pad=0.3",
-                                facecolor="white",
-                                alpha=0.9,
-                                edgecolor="gray",
-                                linewidth=1,
-                            ),
-                            arrowprops=dict(
-                                arrowstyle="->",
-                                connectionstyle="arc3,rad=0.1",
-                                color="gray",
-                                alpha=0.7,
-                                lw=1,
-                            ),
-                            zorder=5,
-                        )
+                    # 연결 정보 텍스트
+                    mid_date_for_text = last_actual_date + pd.DateOffset(months=months_gap // 2)
+                    mid_value_for_text = (last_actual_value + first_pred_value) / 2
+
+                    change_pct = ((first_pred_value - last_actual_value) / last_actual_value) * 100
+                    change_text = f"변화: {change_pct:+.1f}%"
+
+                    ax.annotate(
+                        change_text,
+                        xy=(mid_date_for_text, mid_value_for_text),
+                        xytext=(0, 20),
+                        textcoords="offset points",
+                        ha="center",
+                        va="bottom",
+                        fontsize=10,
+                        fontweight="bold",
+                        bbox=dict(
+                            boxstyle="round,pad=0.3",
+                            facecolor="white",
+                            alpha=0.9,
+                            edgecolor="gray",
+                            linewidth=1,
+                        ),
+                        arrowprops=dict(
+                            arrowstyle="->",
+                            connectionstyle="arc3,rad=0.1",
+                            color="gray",
+                            alpha=0.7,
+                            lw=1,
+                        ),
+                        zorder=5,
+                    )
 
             # 예측 기간 예측값 (빨간색 실선)
             if pred_dates:
