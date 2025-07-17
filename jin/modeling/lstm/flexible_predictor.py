@@ -10,6 +10,7 @@ Created: 2025-01-15
 - cuDNN 최적화된 LSTM 모델
 - 현실적 성능 평가 기준
 - 통합 리포트 생성 (CSV 1개 + 그래프 1개)
+- 타임스탬프 기반 결과 저장 구조
 """
 
 import pandas as pd
@@ -54,12 +55,12 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # INFO와 WARNING 숨김
 # GPU 최적화 (M1 감지 후 적용)
 try:
     if platform.processor() == "arm" or "Apple" in str(platform.processor()):
-        print("🍎 M1/M2 Mac 감지 - Mixed precision 비활성화")
+        print("[M1/M2 Mac] Mixed precision 비활성화")
     else:
         tf.keras.mixed_precision.set_global_policy("mixed_float16")
-        print("⚡ Mixed precision 활성화")
+        print("[최적화] Mixed precision 활성화")
 except Exception:
-    print("⚠️ Mixed precision 설정 실패 - 기본 설정 사용")
+    print("[경고] Mixed precision 설정 실패 - 기본 설정 사용")
 
 # XLA 완전 비활성화
 os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
@@ -91,7 +92,7 @@ class SmartCountryMapper:
     def __init__(self, data_nationalities=None):
         self.data_nationalities = data_nationalities or []
 
-        # 🌏 확장된 25개 국가 한영 매핑 테이블
+        # 확장된 25개 국가 한영 매핑 테이블
         self.basic_mapping = {
             # 주요 아시아 국가 (12개)
             "중국": ["china", "cn", "prc", "중국"],
@@ -148,6 +149,7 @@ class FlexiblePredictor:
     - 코로나 데이터 처리 옵션 지원
     - M1/M2 Mac 최적화
     - 향상된 예측 정확도
+    - 타임스탬프 기반 결과 저장
     """
 
     def __init__(self, covid_strategy="weighted", performance_mode="auto"):
@@ -175,7 +177,7 @@ class FlexiblePredictor:
         if performance_mode == "auto":
             if platform.processor() == "arm" or "Apple" in platform.processor():
                 self.performance_mode = "m1_optimized"
-                print("🍎 M1/M2 Mac 감지 - 최적화 모드 활성화")
+                print("[M1/M2 Mac] 최적화 모드 활성화")
             else:
                 self.performance_mode = "standard"
 
@@ -183,37 +185,45 @@ class FlexiblePredictor:
         if self.performance_mode == "m1_optimized":
             # M1/M2 Mac용 최적화 설정 (XLA 비활성화)
             tf.config.optimizer.set_jit(False)  # XLA 비활성화 - M1/M2 호환성
-            print("⚡ M1/M2 Metal 가속 활성화 (XLA 비활성화)")
+            print("[최적화] M1/M2 Metal 가속 활성화 (XLA 비활성화)")
 
-        print(f"🛠️ 코로나 데이터 처리 전략: {covid_strategy}")
-        print(f"⚙️ 성능 모드: {self.performance_mode}")
+        print(f"[설정] 코로나 데이터 처리 전략: {covid_strategy}")
+        print(f"[설정] 성능 모드: {self.performance_mode}")
 
         # 기존 초기화 코드
         # 절대경로로 수정하여 안정성 확보
         import os
         base_path = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
         self.data_path = os.path.join(base_path, "jin", "data_preprocessing", "data", "processed", "외국인입국자_전처리완료_딥러닝용.csv")
-        self.results_dir = "results"
+        
+        # 타임스탬프 기반 결과 저장 구조 초기화
+        self.base_results_dir = "results"
+        self.results_dir = None  # 실제 결과 디렉토리는 create_timestamped_results_dir()에서 설정
+        self.timestamp = None
+        
         self.models = {}
         self.scalers = {}
         self.performance_results = []
         self.country_mapping = {}
+        
+        # 학습 로그 저장용 리스트 추가
+        self.training_logs = []
 
-        # 결과 디렉토리 생성
-        os.makedirs(self.results_dir, exist_ok=True)
+        # 타임스탬프 결과 디렉토리 생성
+        self.create_timestamped_results_dir()
 
         # GPU 설정
         physical_devices = tf.config.experimental.list_physical_devices("GPU")
         if len(physical_devices) > 0:
             tf.config.experimental.set_memory_growth(physical_devices[0], True)
-            print("✅ GPU 메모리 증가 설정 완료")
+            print("[성공] GPU 메모리 증가 설정 완료")
 
         # Mixed precision 설정 (M1/M2에서 경고 방지)
         if self.performance_mode != "m1_optimized":
             tf.keras.mixed_precision.set_global_policy("mixed_float16")
-            print("✅ Mixed precision 활성화")
+            print("[성공] Mixed precision 활성화")
         else:
-            print("⚠️ M1/M2 Mac에서 Mixed precision 비활성화 (안정성 향상)")
+            print("[경고] M1/M2 Mac에서 Mixed precision 비활성화 (안정성 향상)")
 
         # 데이터 로드
         self.load_data()
@@ -236,6 +246,17 @@ class FlexiblePredictor:
             "roc_auc": 0.75,
         }
 
+    def create_timestamped_results_dir(self):
+        """타임스탬프 기반 결과 디렉토리 생성"""
+        self.timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.results_dir = os.path.join(self.base_results_dir, self.timestamp)
+        
+        # 결과 디렉토리 생성
+        os.makedirs(self.results_dir, exist_ok=True)
+        
+        print(f"[디렉토리] 결과 저장 디렉토리 생성: {self.results_dir}")
+        print(f"[시간] 타임스탬프: {self.timestamp}")
+
     def load_data(self):
         """데이터 로드 및 전처리 (코로나 데이터 처리 포함)"""
         print("데이터 로드 중...")
@@ -255,13 +276,13 @@ class FlexiblePredictor:
 
         original_size = len(self.data)
 
-        # 🔥 코로나 데이터 처리 전략 적용
+        # 코로나 데이터 처리 전략 적용
         if self.covid_strategy == "exclude":
             # 코로나 기간 데이터 완전 제외
             self.data = self.data[self.data["코로나기간"] == 0].copy()
             excluded_count = original_size - len(self.data)
             print(
-                f"🚫 코로나 기간 데이터 제외: {excluded_count:,}행 제거 ({excluded_count/original_size*100:.1f}%)"
+                f"[제외] 코로나 기간 데이터 제외: {excluded_count:,}행 제거 ({excluded_count/original_size*100:.1f}%)"
             )
 
         elif self.covid_strategy == "weighted":
@@ -270,12 +291,12 @@ class FlexiblePredictor:
             covid_mask = self.data["코로나기간"] == 1
             self.data.loc[covid_mask, "sample_weight"] = 0.1  # 코로나 기간 데이터 가중치 10%
             covid_count = covid_mask.sum()
-            print(f"⚖️ 코로나 기간 데이터 가중치 조정: {covid_count:,}행에 10% 가중치 적용")
+            print(f"[가중치] 코로나 기간 데이터 가중치 조정: {covid_count:,}행에 10% 가중치 적용")
 
         elif self.covid_strategy == "include":
             # 모든 데이터 포함 (기존 방식)
             self.data["sample_weight"] = 1.0
-            print("📊 모든 데이터 포함 (기존 방식)")
+            print("[포함] 모든 데이터 포함 (기존 방식)")
 
         print(f"데이터 로드 완료: {len(self.data):,}행")
         print(f"데이터 기간: {self.data['날짜'].min()} ~ {self.data['날짜'].max()}")
@@ -890,7 +911,7 @@ class FlexiblePredictor:
                 return "심각"
 
     def train_purpose_model(self, nationality, purpose):
-        """모델 학습"""
+        """모델 학습 - Fit 로그 캡처 강화"""
         print(f"모델 학습 시작: {nationality}-{purpose}")
 
         # 해당 조합 데이터 필터링
@@ -987,6 +1008,10 @@ class FlexiblePredictor:
 
         print("학습 완료!")
 
+        # 🔥 Fit 로그 캡처 및 저장
+        training_log = self.capture_training_logs(history, nationality, purpose, data_size)
+        self.training_logs.append(training_log)
+
         # 성능 평가
         if len(X_val) > 0:
             print("성능 평가 중...")
@@ -1007,7 +1032,7 @@ class FlexiblePredictor:
                 y_true_rescaled, y_pred_rescaled, f"{nationality}_{purpose}", realistic_thresholds
             )
 
-            # 추가 정보
+            # 🔥 추가 정보 (Fit 로그 포함)
             metrics.update(
                 {
                     "nationality": nationality,
@@ -1016,6 +1041,14 @@ class FlexiblePredictor:
                     "epochs_trained": len(history.history["loss"]),
                     "final_train_loss": history.history["loss"][-1],
                     "final_val_loss": history.history.get("val_loss", [None])[-1],
+                    "final_train_mae": history.history["mae"][-1],
+                    "final_val_mae": history.history.get("val_mae", [None])[-1],
+                    "best_train_loss": min(history.history["loss"]),
+                    "best_val_loss": min(history.history.get("val_loss", [float('inf')])),
+                    "best_train_mae": min(history.history["mae"]),
+                    "best_val_mae": min(history.history.get("val_mae", [float('inf')])),
+                    "early_stopped": len(history.history["loss"]) < epochs,
+                    "learning_rate_used": learning_rate,
                     "data_size": data_size,
                     "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
                 }
@@ -1033,6 +1066,89 @@ class FlexiblePredictor:
 
         print(f"모델 학습 완료: {nationality}-{purpose}")
         return True
+
+    def capture_training_logs(self, history, nationality, purpose, data_size):
+        """🔥 학습 과정 상세 로그 캡처"""
+        training_log = {
+            "nationality": nationality,
+            "purpose": purpose,
+            "data_size": data_size,
+            "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            
+            # 학습 결과 요약
+            "epochs_trained": len(history.history["loss"]),
+            "final_train_loss": history.history["loss"][-1],
+            "final_train_mae": history.history["mae"][-1],
+            "best_train_loss": min(history.history["loss"]),
+            "best_train_mae": min(history.history["mae"]),
+            
+            # 검증 결과 (있는 경우)
+            "has_validation": "val_loss" in history.history,
+            "final_val_loss": history.history.get("val_loss", [None])[-1],
+            "final_val_mae": history.history.get("val_mae", [None])[-1],
+            "best_val_loss": min(history.history.get("val_loss", [float('inf')])),
+            "best_val_mae": min(history.history.get("val_mae", [float('inf')])),
+            
+            # 학습 곡선 데이터
+            "loss_curve": history.history["loss"],
+            "mae_curve": history.history["mae"],
+            "val_loss_curve": history.history.get("val_loss", []),
+            "val_mae_curve": history.history.get("val_mae", []),
+            
+            # 학습 품질 지표
+            "loss_improvement": (history.history["loss"][0] - history.history["loss"][-1]) / history.history["loss"][0] * 100,
+            "mae_improvement": (history.history["mae"][0] - history.history["mae"][-1]) / history.history["mae"][0] * 100,
+            "convergence_speed": len(history.history["loss"]) / 100,  # 에포크 대비 수렴 속도
+        }
+        
+        print(f"📊 학습 로그 캡처 완료: {nationality}-{purpose}")
+        print(f"   손실 개선: {training_log['loss_improvement']:.1f}%")
+        print(f"   MAE 개선: {training_log['mae_improvement']:.1f}%")
+        print(f"   수렴 속도: {training_log['convergence_speed']:.2f}")
+        
+        return training_log
+
+    def save_training_logs_report(self):
+        """🔥 학습 로그 전용 리포트 생성"""
+        if not self.training_logs:
+            print("저장할 학습 로그가 없습니다.")
+            return
+        
+        # 학습 로그 데이터프레임 생성
+        logs_df = pd.DataFrame(self.training_logs)
+        
+        # 학습 로그 전용 리포트 생성
+        logs_report_data = []
+        
+        for _, log in logs_df.iterrows():
+            report_row = {
+                "국적": log["nationality"],
+                "목적": log["purpose"],
+                "데이터크기": log["data_size"],
+                "학습에포크": log["epochs_trained"],
+                "최종학습손실": f"{log['final_train_loss']:.6f}",
+                "최종학습MAE": f"{log['final_train_mae']:.6f}",
+                "최고학습손실": f"{log['best_train_loss']:.6f}",
+                "최고학습MAE": f"{log['best_train_mae']:.6f}",
+                "검증데이터유무": "있음" if log["has_validation"] else "없음",
+                "최종검증손실": f"{log['final_val_loss']:.6f}" if log["final_val_loss"] is not None else "N/A",
+                "최종검증MAE": f"{log['final_val_mae']:.6f}" if log["final_val_mae"] is not None else "N/A",
+                "최고검증손실": f"{log['best_val_loss']:.6f}" if log["best_val_loss"] != float('inf') else "N/A",
+                "최고검증MAE": f"{log['best_val_mae']:.6f}" if log["best_val_mae"] != float('inf') else "N/A",
+                "손실개선률": f"{log['loss_improvement']:.1f}%",
+                "MAE개선률": f"{log['mae_improvement']:.1f}%",
+                "수렴속도": f"{log['convergence_speed']:.2f}",
+                "생성시간": log["timestamp"],
+            }
+            logs_report_data.append(report_row)
+        
+        # 학습 로그 리포트 저장
+        logs_report_df = pd.DataFrame(logs_report_data)
+        logs_report_path = f"{self.results_dir}/학습로그_리포트.csv"
+        logs_report_df.to_csv(logs_report_path, index=False, encoding="utf-8-sig")
+        print(f"학습 로그 리포트 저장: {logs_report_path}")
+        
+        return logs_report_path
 
     def predict_future_months(self, nationality, purpose, target_months):
         """실제 패턴 반영 예측 (연속성 보정 포함) - 관광 목적 특별 처리"""
@@ -1825,27 +1941,15 @@ class FlexiblePredictor:
             return 4
 
     def save_comprehensive_report(self):
-        """통합 리포트 생성 (CSV 1개 + 그래프 1개)"""
+        """통합 리포트 생성 (CSV 1개 + 그래프 1개) - 사용자 요청만 처리"""
         if not self.performance_results:
             print("저장할 성능 평가 결과가 없습니다.")
             return
 
-        # 주요 목적 리스트 (누락 방지)
-        main_purposes = ["공용", "상용", "유학연수", "관광"]
-        main_nationality = "중국"  # 기본적으로 중국 기준, 필요시 확장
-
-        # 누락된 목적 체크 및 강제 학습/평가
-        existing_keys = set((row["nationality"], row["purpose"]) for row in self.performance_results)
-        for purpose in main_purposes:
-            key = (main_nationality, purpose)
-            if key not in existing_keys:
-                print(f"[리포트 보완] {main_nationality}-{purpose} 누락 → 강제 학습/평가 실행")
-                self.train_purpose_model(main_nationality, purpose)
-
         # 성능 결과 데이터프레임 생성
         performance_df = pd.DataFrame(self.performance_results)
 
-        # 통합 리포트 데이터 생성
+        # 🔥 리포트 데이터 생성 시 누락 체크 강화
         report_data = []
 
         for _, row in performance_df.iterrows():
@@ -1884,11 +1988,21 @@ class FlexiblePredictor:
                 "F1_기준값": f"{row['f1_score_기준값']:.2f}",
                 "F1_달성여부": "↑" if row["f1_score"] >= row["f1_score_기준값"] else "↓",
                 "F1_등급": row["f1_score_등급"],
-                # 종합 성과
-                "최종학습오차": f"{row['final_train_loss']:.6f}",
-                "최종검증오차": (
+                # 🔥 학습 로그 정보 추가
+                "최종학습손실": f"{row['final_train_loss']:.6f}",
+                "최종검증손실": (
                     f"{row['final_val_loss']:.6f}" if row["final_val_loss"] is not None else "N/A"
                 ),
+                "최종학습MAE": f"{row['final_train_mae']:.6f}",
+                "최종검증MAE": (
+                    f"{row['final_val_mae']:.6f}" if row["final_val_mae"] is not None else "N/A"
+                ),
+                "최고학습손실": f"{row['best_train_loss']:.6f}",
+                "최고검증손실": (
+                    f"{row['best_val_loss']:.6f}" if row["best_val_loss"] != float('inf') else "N/A"
+                ),
+                "조기종료여부": "예" if row["early_stopped"] else "아니오",
+                "학습률": f"{row['learning_rate_used']:.6f}",
                 "생성시간": row["timestamp"],
             }
 
@@ -1897,12 +2011,10 @@ class FlexiblePredictor:
         # 리포트 데이터프레임 생성
         report_df = pd.DataFrame(report_data)
 
-        # 주요 목적이 모두 포함되어 있는지 최종 체크 (누락 시 경고)
-        for purpose in main_purposes:
-            if not ((report_df["국적"] == main_nationality) & (report_df["목적"] == purpose)).any():
-                print(f"[경고] 리포트에 {main_nationality}-{purpose} 결과가 누락되어 있습니다!")
+        # 사용자 요청한 결과만 리포트 생성
+        print(f"[리포트] {len(report_df)}개 모델의 성능 결과를 리포트에 포함")
 
-        # CSV 저장
+        # CSV 저장 (타임스탬프 디렉토리에)
         report_path = f"{self.results_dir}/리포트.csv"
         report_df.to_csv(report_path, index=False, encoding="utf-8-sig")
         print(f"통합 리포트 저장: {report_path}")
@@ -1916,7 +2028,7 @@ class FlexiblePredictor:
         return report_path
 
     def create_comprehensive_performance_chart(self, performance_df):
-        """종합 성능 차트 생성"""
+        """종합 성능 차트 생성 - 범례 최적화"""
 
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(20, 16))
 
@@ -1941,7 +2053,10 @@ class FlexiblePredictor:
         ax1.set_ylabel("MAE")
         ax1.set_xticks(x_pos)
         ax1.set_xticklabels(model_names, rotation=45, ha="right")
-        ax1.legend()
+        
+        # 🔥 범례 최적화
+        self._create_optimized_legend(ax1, position="upper right")
+
         ax1.grid(True, alpha=0.3)
 
         # 2. R² Score vs 기준값 비교
@@ -1955,7 +2070,10 @@ class FlexiblePredictor:
         ax2.set_ylabel("R² Score")
         ax2.set_xticks(x_pos)
         ax2.set_xticklabels(model_names, rotation=45, ha="right")
-        ax2.legend()
+        
+        # 🔥 범례 최적화
+        self._create_optimized_legend(ax2, position="upper left")
+
         ax2.grid(True, alpha=0.3)
 
         # 3. 종합 달성률 차트
@@ -2002,16 +2120,8 @@ class FlexiblePredictor:
             train_samples, epochs, s=200, alpha=0.7, c=range(len(model_names)), cmap="viridis"
         )
 
-        # 모델명 라벨 추가
-        for i, name in enumerate(model_names):
-            ax4.annotate(
-                name,
-                (train_samples[i], epochs[i]),
-                xytext=(5, 5),
-                textcoords="offset points",
-                fontsize=9,
-                ha="left",
-            )
+        # 🔥 모델명 라벨 최적화 (겹침 방지)
+        self._add_optimized_labels(ax4, train_samples, epochs, model_names)
 
         ax4.set_title("학습 정보 (샘플수 vs 에포크)", fontsize=14, fontweight="bold")
         ax4.set_xlabel("학습 샘플 수")
@@ -2023,12 +2133,117 @@ class FlexiblePredictor:
 
         plt.tight_layout()
 
-        # 그래프 저장
+        # 🔥 그래프 저장 (타임스탬프 디렉토리에)
         chart_path = f"{self.results_dir}/성능_리포트.png"
         plt.savefig(chart_path, dpi=300, bbox_inches="tight")
         print(f"종합 성능 차트 저장: {chart_path}")
 
         plt.show()
+
+    def _create_optimized_legend(self, ax, position="auto"):
+        """🔥 최적화된 범례 생성"""
+        if position == "auto":
+            # 그래프 내용에 따라 자동 위치 결정
+            xlim = ax.get_xlim()
+            ylim = ax.get_ylim()
+            
+            # 데이터 분포에 따라 위치 결정
+            if ylim[1] > ylim[0] * 2:  # 세로로 긴 경우
+                position = "upper right"
+            else:
+                position = "upper left"
+        
+        # 범례 스타일 최적화
+        legend = ax.legend(
+            fontsize=11,
+            loc=position,
+            frameon=True,
+            fancybox=True,
+            shadow=True,
+            borderpad=1.0,
+            columnspacing=1.0,
+            ncol=1,  # 세로 배치로 겹침 방지
+            bbox_to_anchor=None
+        )
+        
+        # 범례 프레임 스타일 개선
+        frame = legend.get_frame()
+        frame.set_facecolor('white')
+        frame.set_alpha(0.9)
+        frame.set_edgecolor('gray')
+        frame.set_linewidth(1.0)
+
+    def _add_optimized_labels(self, ax, x_values, y_values, labels):
+        """🔥 최적화된 라벨 추가 (겹침 방지)"""
+        from matplotlib.patches import Rectangle
+        
+        # 라벨 간격 계산
+        x_range = max(x_values) - min(x_values)
+        y_range = max(y_values) - min(y_values)
+        
+        # 겹침 방지를 위한 최소 간격
+        min_x_gap = x_range * 0.05
+        min_y_gap = y_range * 0.05
+        
+        placed_labels = []
+        
+        for i, (x, y, label) in enumerate(zip(x_values, y_values, labels)):
+            # 기존 라벨과의 거리 확인
+            too_close = False
+            for placed_x, placed_y in placed_labels:
+                if abs(x - placed_x) < min_x_gap and abs(y - placed_y) < min_y_gap:
+                    too_close = True
+                    break
+            
+            if not too_close:
+                # 라벨 위치 결정
+                if i % 2 == 0:
+                    xytext = (5, 5)
+                    va = "bottom"
+                    ha = "left"
+                else:
+                    xytext = (-5, -15)
+                    va = "top"
+                    ha = "right"
+                
+                # 라벨 추가
+                ax.annotate(
+                    label,
+                    (x, y),
+                    xytext=xytext,
+                    textcoords="offset points",
+                    fontsize=9,
+                    ha=ha,
+                    va=va,
+                    bbox=dict(
+                        boxstyle="round,pad=0.3",
+                        facecolor="white",
+                        alpha=0.8,
+                        edgecolor="gray",
+                        linewidth=0.5
+                    ),
+                    arrowprops=dict(
+                        arrowstyle="->",
+                        connectionstyle="arc3,rad=0.1",
+                        color="gray",
+                        alpha=0.7,
+                        lw=1
+                    )
+                )
+                
+                placed_labels.append((x, y))
+            else:
+                # 겹치는 경우 간단한 점만 표시
+                ax.annotate(
+                    f"•",
+                    (x, y),
+                    xytext=(0, 0),
+                    textcoords="offset points",
+                    fontsize=12,
+                    ha="center",
+                    va="center",
+                    color="red"
+                )
 
     def print_summary_statistics(self, performance_df):
         """요약 통계 출력"""
@@ -3017,6 +3232,9 @@ class FlexiblePredictor:
 
                 # 통합 리포트 생성
                 self.save_comprehensive_report()
+                
+                # 🔥 학습 로그 리포트 생성
+                self.save_training_logs_report()
 
             return results
         else:
@@ -3031,6 +3249,10 @@ class FlexiblePredictor:
 
                 # 통합 리포트 생성
                 self.save_comprehensive_report()
+                
+                # 🔥 학습 로그 리포트 생성
+                self.save_training_logs_report()
+                
                 return results
 
             return None
