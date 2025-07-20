@@ -72,7 +72,7 @@ class ForeignVisitorDataProcessor:
 
     def __init__(
         self,
-        input_file="../han/data/1_2_(로우데이터_합본.csv)목적별_국적별_입국(05년1월~25년5월).csv",
+        input_file="/Volumes/DATA/mbc_project/1stProject/jin/data_preprocessing/data/1_2_(로우데이터_합본.csv)목적별 국적별 입국_(05년1월~25년5월).csv",
     ):
         """
         초기화 함수
@@ -240,28 +240,41 @@ class ForeignVisitorDataProcessor:
 
     def add_lag_features(self):
         """
-        지연 특성 변수 추가 (딥러닝 모델용)
+        지연 특성 변수 추가 및 결측치/inf 처리
         """
-        print("\n⏰ 지연 특성 변수 생성 중...")
+        print("\n⏰ 지연 특성 변수 생성 및 결측치/inf 처리 중...")
 
         def create_lag_features(group):
             """그룹별 지연 특성 생성 함수"""
             group = group.sort_values("날짜").copy()
 
-            # 지연 변수들 한 번에 생성
-            for lag in [1, 3, 12]:
-                group[f"입국자수_{lag}개월전"] = group["입국자수"].shift(lag)
+            # 지연 변수 및 이동평균 컬럼 목록
+            lag_cols = []
+            ma_cols = []
 
-            # 이동평균들 한 번에 생성
+            # 지연 변수들 생성
+            for lag in [1, 3, 12]:
+                col_name = f"입국자수_{lag}개월전"
+                group[col_name] = group["입국자수"].shift(lag)
+                lag_cols.append(col_name)
+
+            # 이동평균들 생성
             for window in [3, 12]:
-                group[f"입국자수_{window}개월평균"] = (
+                col_name = f"입국자수_{window}개월평균"
+                group[col_name] = (
                     group["입국자수"].rolling(window=window, min_periods=1).mean()
                 )
+                ma_cols.append(col_name)
 
             # 전년동월대비 증감률
             group["전년동월대비증감률"] = (
                 (group["입국자수"] - group["입국자수_12개월전"]) / group["입국자수_12개월전"] * 100
-            ).fillna(0)
+            )
+            
+            # NaN 및 inf 값 처리
+            group[lag_cols] = group[lag_cols].fillna(0)
+            group[ma_cols] = group[ma_cols].fillna(0)
+            group["전년동월대비증감률"] = group["전년동월대비증감률"].replace([np.inf, -np.inf], 0).fillna(0)
 
             return group
 
@@ -272,7 +285,32 @@ class ForeignVisitorDataProcessor:
             .reset_index(drop=True)
         )
 
-        print("✅ 지연 특성 변수 생성 완료")
+        print("✅ 지연 특성 변수 생성 및 결측치/inf 처리 완료")
+
+    def normalize_features(self):
+        """
+        수치형 특성 정규화 (로그 변환)
+        """
+        print("\n⚖️ 수치형 특성 정규화 (로그 변환) 중...")
+
+        # 로그 변환을 적용할 컬럼 목록
+        cols_to_normalize = [
+            "입국자수",
+            "입국자수_1개월전",
+            "입국자수_3개월전",
+            "입국자수_12개월전",
+            "입국자수_3개월평균",
+            "입국자수_12개월평균",
+        ]
+
+        # 컬럼이 데이터에 존재하는지 확인 후 로그 변환 적용
+        for col in cols_to_normalize:
+            if col in self.processed_data.columns:
+                self.processed_data[col] = np.log1p(self.processed_data[col])
+            else:
+                print(f"⚠️ 정규화 대상 컬럼 '{col}'이 존재하지 않습니다.")
+
+        print("✅ 수치형 특성 정규화 완료")
 
     def save_processed_data(self):
         """
@@ -363,11 +401,12 @@ class ForeignVisitorDataProcessor:
                 (self.remove_aggregated_rows, "소계/합계 제거"),
                 (self.reshape_to_long_format, "Long format 변환"),
                 (self.add_date_features, "날짜 특성 추가"),
-                (self.add_lag_features, "지연 특성 추가"),
+                (self.add_lag_features, "지연 특성 추가 및 결측치/inf 처리"),
+                (self.normalize_features, "수치형 특성 정규화"),
             ]
 
             # 데이터 로드 단계는 별도 처리 (반환값 확인 필요)
-            if not self.load_data():
+            if not steps[0][0]():
                 return False
 
             # 나머지 단계들 실행
