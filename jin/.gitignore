@@ -1,8 +1,10 @@
+__pycache__
+.env
+.gemini/
 *.DS_Store
 *.md
 *.txt
 *.log
 *.json
 *.png
-__pycache__
 *.h5
