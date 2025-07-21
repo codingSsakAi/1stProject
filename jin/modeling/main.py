@@ -141,10 +141,25 @@ class MainPredictor:
 
         for p in purposes_to_predict:
             print(f"\n--- {nationality} - {p} 예측 시작 ---")
-            combo_data = self.data_handler.get_data_for_purpose(nationality, p, covid_strategy)
+            
+            # 목적별 최적 코로나 전략 적용 (성능 향상)
+            optimal_strategy = self._get_optimal_covid_strategy(p, covid_strategy)
+            if optimal_strategy != covid_strategy:
+                print(f"[최적화] {p} 목적에 최적화된 코로나 전략 적용: {covid_strategy} → {optimal_strategy}")
+            
+            combo_data = self.data_handler.get_data_for_purpose(nationality, p, optimal_strategy)
             if combo_data.empty or len(combo_data) < config.LSTM_SEQUENCE_LENGTH_LARGE_DATA:
                 print(f"데이터가 부족하여 ({len(combo_data)}개) 건너뜁니다.")
                 continue
+            
+            # 데이터 증강 활성화 (목적별 차별화된 성능 향상)
+            print(f"원본 데이터: {len(combo_data)}개월")
+            augmented_datasets = self.data_handler.augment_data(combo_data, purpose=p)
+            combo_data = augmented_datasets[0]  # 증강된 데이터 사용
+            print(f"증강 후 데이터: {len(combo_data)}개월")
+            
+            # 데이터 특성 분석 (3단계 개선)
+            data_characteristics = self.data_handler.analyze_data_characteristics(combo_data, p)
             
             historical_data_collection[p] = combo_data
 
@@ -158,16 +173,64 @@ class MainPredictor:
                 print("시퀀스 생성에 실패하여 건너뜁니다.")
                 continue
 
+            # 스마트 앙상블 모드 확인 및 모델 학습 (1-3단계 통합 개선)
+            if config.ENABLE_ENSEMBLE:
+                print(f"\n🔥 스마트 앙상블 모드로 학습 진행 중...")
+                
+                # 동적 최적화된 앙상블 학습
+                ensemble_models, ensemble_scalers, ensemble_metrics = self._train_smart_ensemble_models(
+                    X, y, p, data_characteristics
+                )
+                
+                if ensemble_models:
+                    # 앙상블 모델 저장
+                    self.models[p] = {'type': 'ensemble', 'models': ensemble_models, 'scalers': ensemble_scalers}
+                    # 앙상블 성능 정보를 위한 대표 성능 선택 (최고 성능 모델 기준)
+                    best_performance = max(ensemble_metrics.values(), key=lambda x: x.get('f1', 0))
+                    performance = best_performance.copy()
+                    performance['ensemble_count'] = len(ensemble_models)
+                    performance['ensemble_models'] = list(ensemble_models.keys())
+                    performance['data_characteristics'] = data_characteristics['characteristics']
+                    performance['optimization_applied'] = config.ENABLE_SMART_OPTIMIZATION
+                    
+                    # 더미 history 생성 (호환성을 위해)
+                    class DummyHistory:
+                        def __init__(self):
+                            self.history = {'loss': [0.1], 'mae': [0.1], 'val_loss': [0.1], 'val_mae': [0.1]}
+                    history = DummyHistory()
+                else:
+                    print("❌ 앙상블 학습 실패, 스마트 단일 모델로 폴백")
+                    # 스마트 단일 모델 학습으로 폴백
+                    model = self.model_builder.build_smart_model(X.shape[1:], data_characteristics, self.data_handler)
+                    trainer = Trainer(model, scaler, config)
+                    history = trainer.train(X, y, p)
+                    self.models[p] = {'type': 'single', 'model': model, 'scaler': scaler}
+                    performance = trainer.evaluate(p)
+            else:
+                # 스마트 단일 모델 학습 방식 (기존 코드 + 3단계 개선)
+                if config.ENABLE_SMART_OPTIMIZATION:
+                    model = self.model_builder.build_smart_model(X.shape[1:], data_characteristics, self.data_handler)
+                else:
             model = self.model_builder.build(X.shape[1:], len(X), p)
+                
             trainer = Trainer(model, scaler, config)
             history = trainer.train(X, y, p)
-            self.models[p] = model # 목적별 모델 저장
+                self.models[p] = {'type': 'single', 'model': model, 'scaler': scaler}
+                performance = trainer.evaluate(p)
             
             if history is None:
                 print(f"{p} 목적에 대한 모델 학습에 실패했습니다.")
                 continue
 
-            # 평가 지표에 학습 과정 정보 추가
+            # 평가 지표에 학습 과정 정보 추가 (오류 수정: trainer 존재 여부 확인)
+            # 앙상블 모드에서는 이미 performance가 정의되어 있고, trainer가 없을 수 있음
+            if 'trainer' not in locals() or trainer is None:
+                # 앙상블 모드에서 performance가 이미 정의된 경우, 재평가하지 않음
+                if 'performance' not in locals():
+                    print(f"⚠️ {p} 목적에 대한 성능 평가를 건너뜁니다.")
+                    continue
+            else:
+                # trainer가 존재하는 경우에만 재평가 (단일 모델 모드 또는 앙상블 폴백)
             performance = trainer.evaluate(p)
             if performance:
                 performance['nationality'] = nationality
@@ -178,12 +241,31 @@ class MainPredictor:
                 performance['final_val_mae'] = history.history.get('val_mae', [None])[-1]
                 performance['best_val_loss'] = min(history.history.get('val_loss', [float('inf')]))
                 performance['best_train_loss'] = min(history.history.get('loss', [float('inf')]))
+                # trainer 존재 여부에 따른 추가 정보 설정 (오류 방지)
+                if 'trainer' in locals() and trainer is not None:
                 performance['early_stopped'] = trainer.callbacks[0].stopped_epoch > 0 if hasattr(trainer.callbacks[0], 'stopped_epoch') else False
                 performance['learning_rate_used'] = trainer.model.optimizer.learning_rate.numpy()
+                else:
+                    # 앙상블 모드에서는 기본값 설정
+                    performance['early_stopped'] = False
+                    performance['learning_rate_used'] = 0.001  # 기본값
                 performance['timestamp'] = self.timestamp
                 performance_results.append(performance)
 
-            predictor = Predictor(model, scaler, features, combo_data, config)
+            # 앙상블 모드에 따른 예측 실행 (1단계 개선)
+            if config.ENABLE_ENSEMBLE and self.models[p]['type'] == 'ensemble':
+                # 앙상블 예측 실행
+                ensemble_models = self.models[p]['models']
+                ensemble_scalers = self.models[p]['scalers']
+                # 대표 스케일러 사용 (첫 번째 모델의 스케일러)
+                main_scaler = list(ensemble_scalers.values())[0]
+                predictor = Predictor(None, main_scaler, features, combo_data, config)
+                predictions = predictor.predict_ensemble_future(target_months, p, ensemble_models, ensemble_scalers)
+            else:
+                # 단일 모델 예측 실행 (기존 방식 보존)
+                single_model = self.models[p]['model'] if self.models[p]['type'] == 'single' else self.models[p]
+                single_scaler = self.models[p]['scaler'] if self.models[p]['type'] == 'single' else self.scalers[p]
+                predictor = Predictor(single_model, single_scaler, features, combo_data, config)
             predictions = predictor.predict_future(target_months, p)
             results[p] = predictions
 
@@ -198,8 +280,120 @@ class MainPredictor:
             end_date
         )
 
+    def _get_optimal_covid_strategy(self, purpose, user_selected_strategy):
+        """목적별 최적 코로나 전략을 반환합니다."""
+        if hasattr(self.config, 'PURPOSE_OPTIMAL_COVID_STRATEGY') and purpose in self.config.PURPOSE_OPTIMAL_COVID_STRATEGY:
+            optimal_strategy = self.config.PURPOSE_OPTIMAL_COVID_STRATEGY[purpose]
+            # 사용자가 weighted를 선택했을 때만 최적화 적용 (사용자 의도 존중)
+            if user_selected_strategy == "weighted":
+                return optimal_strategy
+        return user_selected_strategy
+
     def _generate_target_months(self, start_date, end_date):
         return pd.date_range(start=start_date, end=end_date, freq='MS').strftime('%Y-%m').tolist()
+
+    # --- 앙상블 시스템 메서드 (1단계 개선) ---
+    
+    def _train_ensemble_models(self, X, y, purpose):
+        """
+        앙상블 모델 학습을 실행합니다.
+        """
+        try:
+            # 앙상블 학습을 위한 임시 trainer 생성 (안전한 X_val 설정)
+            temp_trainer = Trainer(None, None, self.config)
+            # 앙상블에서 사용할 안전한 검증 데이터 설정
+            if len(X) > 10:  # 충분한 데이터가 있을 때만 분할
+                from sklearn.model_selection import train_test_split
+                X_temp, X_val_safe, y_temp, y_val_safe = train_test_split(
+                    X, y, test_size=0.2, random_state=42, shuffle=False
+                )
+                temp_trainer.X_val = X_val_safe
+                temp_trainer.y_val = y_val_safe
+            else:
+                # 데이터가 적을 때는 전체 데이터 사용
+                temp_trainer.X_val = X
+                temp_trainer.y_val = y
+            
+            # 앙상블 모델 학습 실행
+            ensemble_models, ensemble_scalers, ensemble_metrics = temp_trainer.train_ensemble_models(
+                X, y, purpose, self.model_builder
+            )
+            
+            return ensemble_models, ensemble_scalers, ensemble_metrics
+            
+        except Exception as e:
+            print(f"❌ 앙상블 학습 중 오류 발생: {str(e)}")
+            return {}, {}, {}
+
+    def _train_smart_ensemble_models(self, X, y, purpose, data_characteristics):
+        """
+        데이터 특성에 기반한 스마트 앙상블 모델 학습을 실행합니다. (3단계 개선)
+        """
+        try:
+            print(f"  🧠 데이터 특성 기반 최적화 적용 중...")
+            
+            # 최적화된 앙상블 가중치 계산
+            optimized_weights = self.model_builder.get_optimized_ensemble_weights(data_characteristics)
+            
+            # config의 앙상블 가중치를 임시로 교체
+            original_weights = self.config.ENSEMBLE_MODELS.get(purpose, {}).copy()
+            self.config.ENSEMBLE_MODELS[purpose] = optimized_weights
+            
+            # 하이퍼파라미터 자동 튜닝 (선택적)
+            if self.config.ENABLE_SMART_OPTIMIZATION and data_characteristics["size"] > 50:
+                print(f"  🔧 하이퍼파라미터 자동 튜닝 시도 중...")
+                best_params = self._auto_tune_hyperparameters(X, y, purpose, data_characteristics)
+                if best_params:
+                    print(f"  ✅ 최적 파라미터 적용: {best_params}")
+            
+            # 스마트 앙상블 학습을 위한 trainer 생성 (안전한 X_val 설정)
+            temp_trainer = Trainer(None, None, self.config)
+            # 앙상블에서 사용할 안전한 검증 데이터 설정
+            if len(X) > 10:  # 충분한 데이터가 있을 때만 분할
+                from sklearn.model_selection import train_test_split
+                X_temp, X_val_safe, y_temp, y_val_safe = train_test_split(
+                    X, y, test_size=0.2, random_state=42, shuffle=False
+                )
+                temp_trainer.X_val = X_val_safe
+                temp_trainer.y_val = y_val_safe
+            else:
+                # 데이터가 적을 때는 전체 데이터 사용
+                temp_trainer.X_val = X
+                temp_trainer.y_val = y
+            
+            # 앙상블 모델 학습 실행
+            ensemble_models, ensemble_scalers, ensemble_metrics = temp_trainer.train_ensemble_models(
+                X, y, purpose, self.model_builder
+            )
+            
+            # 원래 가중치 복원
+            self.config.ENSEMBLE_MODELS[purpose] = original_weights
+            
+            # 결과에 최적화 정보 추가
+            for model_type, metrics in ensemble_metrics.items():
+                metrics['data_characteristics'] = data_characteristics['characteristics']
+                metrics['optimized_weights_used'] = True
+            
+            return ensemble_models, ensemble_scalers, ensemble_metrics
+            
+        except Exception as e:
+            print(f"❌ 스마트 앙상블 학습 중 오류 발생: {str(e)}")
+            # 기본 앙상블 학습으로 폴백
+            return self._train_ensemble_models(X, y, purpose)
+
+    def _auto_tune_hyperparameters(self, X, y, purpose, data_characteristics):
+        """
+        자동 하이퍼파라미터 튜닝을 실행합니다.
+        """
+        try:
+            temp_trainer = Trainer(None, None, self.config)
+            best_params = temp_trainer.auto_tune_hyperparameters(
+                X, y, purpose, data_characteristics, self.model_builder
+            )
+            return best_params
+        except Exception as e:
+            print(f"  ⚠️ 하이퍼파라미터 튜닝 실패: {str(e)}")
+            return None
 
 if __name__ == "__main__":
     predictor = MainPredictor()

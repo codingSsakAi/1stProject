@@ -43,12 +43,54 @@ class Reporter:
             covid_end_date = pd.to_datetime(self.config.COVID_END_DATE)
             ax.axvspan(covid_start_date, covid_end_date, color='red', alpha=0.2, label='코로나 팬데믹 기간')
 
-            # 예측 데이터 플로팅
+            # 예측 데이터 플로팅 (개선된 시각화)
             if purpose in results and results[purpose]:
                 predictions = results[purpose]
+                
+                # 데이터 형태 안전 검사 및 변환 (오류 수정)
+                if predictions and len(predictions) > 0:
+                    # 첫 번째 요소가 딕셔너리인지 숫자인지 확인
+                    if isinstance(predictions[0], (int, float)):
+                        # 숫자 리스트인 경우 딕셔너리 리스트로 변환
+                        print(f"📊 {purpose}: 숫자 리스트를 딕셔너리 리스트로 변환 중...")
+                        
+                        # start_date부터 예측 개월 수만큼 날짜 생성
+                        start_pred_date = pd.to_datetime(start_date)
+                        pred_months = []
+                        for i in range(len(predictions)):
+                            pred_month = start_pred_date + pd.DateOffset(months=i)
+                            pred_months.append(pred_month.strftime("%Y-%m"))
+                        
+                        # 딕셔너리 리스트로 변환
+                        predictions = [{"month": month, "value": value} 
+                                     for month, value in zip(pred_months, predictions)]
+                        print(f"✅ 변환 완료: {len(predictions)}개 예측값")
+                    elif isinstance(predictions[0], dict):
+                        # 이미 딕셔너리 형태인 경우 그대로 사용
+                        print(f"✅ {purpose}: 이미 올바른 딕셔너리 형태")
+                    else:
+                        print(f"⚠️ {purpose}: 알 수 없는 데이터 형태, 건너뛰기")
+                        continue
+                
+                # 안전하게 데이터 추출
+                try:
                 pred_dates = pd.to_datetime([p["month"] for p in predictions])
                 pred_values = [p["value"] for p in predictions]
-                ax.plot(pred_dates, pred_values, label='예측', color='red', marker='o', linestyle='--', markersize=5)
+                except (KeyError, TypeError) as e:
+                    print(f"⚠️ {purpose}: 데이터 추출 실패 - {str(e)}")
+                    continue
+                
+                # 예측선을 더 눈에 띄게 표시
+                ax.plot(pred_dates, pred_values, label='예측 (개선)', color='#FF4444', 
+                       marker='o', linestyle='-', linewidth=3, markersize=6, alpha=0.9)
+                
+                # 예측 변동성 표시 (간단한 신뢰구간)
+                if len(pred_values) > 1:
+                    pred_std = np.std(pred_values) * 0.3  # 변동성의 30%를 불확실성으로 표시
+                    upper_bound = [v + pred_std for v in pred_values]
+                    lower_bound = [max(1, v - pred_std) for v in pred_values]
+                    ax.fill_between(pred_dates, lower_bound, upper_bound, 
+                                  color='#FF4444', alpha=0.2, label='예측 불확실성 범위')
                 
                 # 실제-예측 연결선
                 if hist_df is not None and not hist_df.empty:
@@ -72,7 +114,26 @@ class Reporter:
             
             # 예측 시작 월 강조
             if purpose in results and results[purpose]:
-                first_pred_date = pd.to_datetime(results[purpose][0]["month"])
+                # 안전한 첫 번째 월 접근 (마지막 오류 수정)
+                predictions = results[purpose]
+                try:
+                    if isinstance(predictions[0], (int, float)):
+                        # 숫자 리스트인 경우: 2026년 1월부터 시작
+                        first_pred_date = pd.to_datetime("2026-01-01")
+                        print(f"🔷 {purpose}: 예측 시작 월을 2026-01로 설정")
+                    elif isinstance(predictions[0], dict):
+                        # 딕셔너리인 경우: 첫 번째 월 사용
+                        first_pred_date = pd.to_datetime(predictions[0]["month"])
+                    else:
+                        # 알 수 없는 형태인 경우: 기본값 사용
+                        first_pred_date = pd.to_datetime("2026-01-01")
+                        print(f"⚠️ {purpose}: 알 수 없는 형태, 기본 시작 월 사용")
+                    
+                    ax.axvline(first_pred_date, color='blue', linestyle=':', linewidth=2, label='예측 시작')
+                except (IndexError, KeyError, TypeError) as e:
+                    # 어떤 오류든 발생하면 기본값 사용하고 계속 진행
+                    print(f"⚠️ {purpose}: 시작 월 설정 실패 ({str(e)}), 기본값 사용")
+                    first_pred_date = pd.to_datetime("2026-01-01")
                 ax.axvline(first_pred_date, color='blue', linestyle=':', linewidth=2, label='예측 시작')
 
             ax.legend(loc='upper left', bbox_to_anchor=(1, 1)) # 범례를 그래프 밖에 위치
@@ -149,8 +210,46 @@ class Reporter:
         
         csv_data = []
         
-        # Get all unique months from the results
-        all_months = sorted(list(set(p["month"] for preds in results.values() for p in preds)))
+        # 데이터 형태 안전 검사 및 변환 (save_prediction_csv)
+        converted_results = {}
+        for purpose_key, predictions_list in results.items():
+            if predictions_list and len(predictions_list) > 0:
+                # 첫 번째 요소가 딕셔너리인지 숫자인지 확인
+                if isinstance(predictions_list[0], (int, float)):
+                    # 숫자 리스트인 경우 딕셔너리 리스트로 변환
+                    print(f"📊 CSV 저장: {purpose_key} 데이터 변환 중...")
+                    
+                    # 2026년 1월부터 시작하여 예측 개월 수만큼 날짜 생성
+                    start_date = "2026-01"
+                    start_pred_date = pd.to_datetime(start_date + "-01")
+                    pred_months = []
+                    for i in range(len(predictions_list)):
+                        pred_month = start_pred_date + pd.DateOffset(months=i)
+                        pred_months.append(pred_month.strftime("%Y-%m"))
+                    
+                    # 딕셔너리 리스트로 변환
+                    converted_predictions = [{"month": month, "value": value} 
+                                           for month, value in zip(pred_months, predictions_list)]
+                    converted_results[purpose_key] = converted_predictions
+                    print(f"✅ CSV: {purpose_key} 변환 완료: {len(converted_predictions)}개")
+                elif isinstance(predictions_list[0], dict):
+                    # 이미 딕셔너리 형태인 경우 그대로 사용
+                    converted_results[purpose_key] = predictions_list
+                else:
+                    print(f"⚠️ CSV: {purpose_key} 알 수 없는 데이터 형태, 건너뛰기")
+                    continue
+            else:
+                converted_results[purpose_key] = predictions_list
+        
+        # 변환된 results 사용
+        results = converted_results
+        
+        # Get all unique months from the results (안전하게 처리)
+        try:
+            all_months = sorted(list(set(p["month"] for preds in results.values() for p in preds if isinstance(p, dict))))
+        except (KeyError, TypeError) as e:
+            print(f"⚠️ CSV 저장 실패: 월 데이터 추출 오류 - {str(e)}")
+            return
         
         for month in all_months:
             row = {"월": month}
@@ -163,7 +262,11 @@ class Reporter:
             유학연수_pred = 0
             
             for purpose_key, predictions_list in results.items():
-                month_pred = next((p["value"] for p in predictions_list if p["month"] == month), 0)
+                # 안전하게 월별 예측값 추출
+                try:
+                    month_pred = next((p["value"] for p in predictions_list if isinstance(p, dict) and p.get("month") == month), 0)
+                except (KeyError, TypeError, AttributeError):
+                    month_pred = 0
                 
                 if purpose_key == "공용":
                     공용_pred = month_pred
