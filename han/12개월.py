@@ -10,13 +10,10 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import concurrent.futures
 import time
-import os
 
 def predict_one_combo(args):
-    # args: (국적, 목적, group 데이터프레임, today)
-    nation, purpose, group, today = args
+    nation, purpose, group = args
     try:
-        result = {}
         if group.shape[0] < 24:
             return None
 
@@ -24,8 +21,9 @@ def predict_one_combo(args):
         group['성수기'] = group['ds'].dt.month.isin([7,8,12]).astype(int)
         group['명절'] = group['ds'].dt.month.isin([1,2,9,10]).astype(int)
 
-        # 예측 구간: 오늘 기준 다음 달부터 12개월
-        start_month = (today + relativedelta(months=1)).replace(day=1)
+        # 각 조합의 마지막 관측월을 기준으로 미래 12개월 예측
+        last_ds = group['ds'].max()
+        start_month = (last_ds + relativedelta(months=1)).replace(day=1)
         future_dates = pd.date_range(start_month, periods=12, freq='MS')
         test_df = pd.DataFrame({'ds': future_dates})
         test_df['성수기'] = test_df['ds'].dt.month.isin([7,8,12]).astype(int)
@@ -87,7 +85,10 @@ def predict_one_combo(args):
                 temp = pd.concat([last_vals, pd.DataFrame({'입국자수':[np.nan]}, index=[0])], ignore_index=True)
                 temp = create_xgb_features(temp, xgb_window)
                 xgb = XGBRegressor(n_estimators=100, random_state=42)
-                xgb.fit(train_xgb[[c for c in train_xgb.columns if c.startswith('lag_')] + ['rolling_mean','rolling_std','diff','clipped']], train_xgb['입국자수'])
+                xgb.fit(
+                    train_xgb[[c for c in train_xgb.columns if c.startswith('lag_')] + ['rolling_mean','rolling_std','diff','clipped']],
+                    train_xgb['입국자수']
+                )
                 X_pred = temp.iloc[-1][[c for c in temp.columns if c.startswith('lag_')] + ['rolling_mean','rolling_std','diff','clipped']].values.reshape(1, -1)
                 pred = xgb.predict(X_pred)[0]
                 preds.append(pred)
@@ -133,13 +134,16 @@ def predict_one_combo(args):
         test_df['stacking_pred'] = test_df[['prophet_pred', 'xgb_pred', 'lstm_pred']].mean(axis=1)
         test_df['국적'] = nation
         test_df['목적'] = purpose
+
+        # ds를 항상 문자열 날짜로 저장
+        test_df['ds'] = pd.to_datetime(test_df['ds']).dt.strftime('%Y-%m-%d')
+
         return test_df[['국적','목적','ds','prophet_pred','xgb_pred','lstm_pred','stacking_pred']]
     except Exception as e:
         print(f"예외 발생 [{nation}/{purpose}] : {e}")
         return None
 
 if __name__ == "__main__":
-    # 데이터 로딩
     df = pd.read_csv("data/목적별국적별입국소계제거.csv", encoding='cp949')
     df = df.dropna()
     df['입국자수'] = df['입국자수'].astype(float)
@@ -149,18 +153,15 @@ if __name__ == "__main__":
     total = len(combos)
     print(f"\n[INFO] 예측 대상 조합: {total}개\n")
     start_time = time.time()
-    today = datetime.today()
 
-    # 병렬 처리 인자 준비
     job_args = []
     for idx, row in combos.iterrows():
         nation, purpose = row['국적'], row['목적']
         group = df[(df['국적']==nation)&(df['목적']==purpose)].copy()
-        job_args.append((nation, purpose, group, today))
+        job_args.append((nation, purpose, group))
 
     results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
-        # 진행률 모니터링
         future_to_combo = {executor.submit(predict_one_combo, args): args[:2] for args in job_args}
         for idx, future in enumerate(concurrent.futures.as_completed(future_to_combo)):
             nation, purpose = future_to_combo[future]

@@ -5,160 +5,182 @@ from xgboost import XGBRegressor
 from keras.models import Sequential
 from keras.layers import LSTM, Dense
 from keras.callbacks import EarlyStopping
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, mean_absolute_percentage_error
 from sklearn.preprocessing import StandardScaler
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-import platform
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
+import concurrent.futures
+import time
 
-# 한글 폰트 설정
-if platform.system() == "Windows":
-    font_family = "Malgun Gothic"
-elif platform.system() == "Darwin":
-    font_family = "AppleGothic"
-else:
-    font_family = "NanumGothic"
+def predict_one_combo(args):
+    nation, purpose, group = args
+    try:
+        if group.shape[0] < 24:
+            return None
 
-mpl.rcParams['font.family'] = font_family
-mpl.rcParams['axes.unicode_minus'] = False
-plt.rcParams['font.family'] = font_family
-plt.rcParams['axes.unicode_minus'] = False
+        group = group.sort_values('ds').reset_index(drop=True)
+        group['성수기'] = group['ds'].dt.month.isin([7,8,12]).astype(int)
+        group['명절'] = group['ds'].dt.month.isin([1,2,9,10]).astype(int)
 
-# 1. 데이터 로딩
-df = pd.read_csv("data/목적별국적별입국소계제거.csv", encoding='cp949')
-df = df.dropna()
-df['입국자수'] = df['입국자수'].astype(float)
+        # 마지막 관측월 기준, 미래 24개월 예측
+        last_ds = group['ds'].max()
+        start_month = (last_ds + relativedelta(months=1)).replace(day=1)
+        future_dates = pd.date_range(start_month, periods=24, freq='MS')
+        test_df = pd.DataFrame({'ds': future_dates})
+        test_df['성수기'] = test_df['ds'].dt.month.isin([7,8,12]).astype(int)
+        test_df['명절']  = test_df['ds'].dt.month.isin([1,2,9,10]).astype(int)
 
-# 2. 월별 집계 및 피처
-df['ds'] = pd.to_datetime(df['년'].astype(str) + df['월'].astype(str).str.zfill(2), format='%Y%m')
-df_month = df.groupby('ds')['입국자수'].sum().reset_index().sort_values('ds')
-df_month['성수기'] = df_month['ds'].dt.month.isin([7,8,12]).astype(int)
-df_month['명절']  = df_month['ds'].dt.month.isin([1,2,9,10]).astype(int)
+        # Prophet
+        try:
+            holidays = pd.DataFrame({
+                'holiday': '명절일',
+                'ds': pd.to_datetime([
+                    '2020-01-25', '2020-09-30', '2021-02-12', '2021-09-21',
+                    '2022-02-01', '2022-09-10', '2023-01-22', '2023-09-29',
+                    '2024-02-10', '2024-09-17', '2025-01-29', '2025-10-06'
+                ]),
+                'lower_window': -1,
+                'upper_window': 2
+            })
+            prophet = Prophet(
+                yearly_seasonality=True,
+                seasonality_mode='multiplicative',
+                changepoint_prior_scale=3.5,
+                seasonality_prior_scale=20,
+                holidays_prior_scale=20,
+                holidays=holidays
+            )
+            prophet.add_regressor('성수기')
+            prophet.add_regressor('명절')
+            prophet.fit(group.rename(columns={'입국자수':'y'}))
+            future = test_df[['ds', '성수기', '명절']]
+            prophet_forecast = prophet.predict(future)
+            test_df['prophet_pred'] = prophet_forecast['yhat'].values
+        except Exception as e:
+            test_df['prophet_pred'] = np.nan
 
-# 3. Train/Test split
-train_end = pd.to_datetime('2024-05-01')
-test_start = pd.to_datetime('2024-06-01')
-test_end = pd.to_datetime('2025-05-01')
-train_df = df_month[(df_month['ds'] <= train_end)].copy()
-test_df  = df_month[(df_month['ds'] >= test_start) & (df_month['ds'] <= test_end)].copy()
+        # XGBoost
+        def add_volatility_features(df, window=3):
+            df = df.copy()
+            df['rolling_mean'] = df['입국자수'].rolling(window=window, min_periods=1).mean()
+            df['rolling_std'] = df['입국자수'].rolling(window=window, min_periods=1).std().fillna(0)
+            df['diff'] = df['입국자수'].diff().fillna(0)
+            lower, upper = df['입국자수'].quantile([0.05, 0.95])
+            df['clipped'] = df['입국자수'].clip(lower=lower, upper=upper)
+            return df
 
-# 4. Prophet: 명절/성수기/holiday 적용
-holidays = pd.DataFrame({
-    'holiday': '명절일',
-    'ds': pd.to_datetime([
-        '2020-01-25', '2020-09-30', '2021-02-12', '2021-09-21',
-        '2022-02-01', '2022-09-10', '2023-01-22', '2023-09-29',
-        '2024-02-10', '2024-09-17', '2025-01-29', '2025-10-06'
-    ]),
-    'lower_window': -1,
-    'upper_window': 2
-})
-prophet = Prophet(
-    yearly_seasonality=True,
-    seasonality_mode='multiplicative',
-    changepoint_prior_scale=3.5,
-    seasonality_prior_scale=20,
-    holidays_prior_scale=20,
-    holidays=holidays
-)
-prophet.add_regressor('성수기')
-prophet.add_regressor('명절')
-prophet.fit(train_df.rename(columns={'입국자수':'y'}))
-future = test_df[['ds', '성수기', '명절']].copy()
-prophet_forecast = prophet.predict(future)
-test_df['prophet_pred'] = prophet_forecast['yhat'].values
+        def create_xgb_features(df, window=24):
+            df = df.copy()
+            for lag in range(1, window+1):
+                df[f'lag_{lag}'] = df['입국자수'].shift(lag)
+            df = add_volatility_features(df, window=3)
+            df = df.dropna().reset_index(drop=True)
+            return df
 
-# 5. XGBoost (동일 방식: feature 추가)
-def add_volatility_features(df, window=3):
-    df = df.copy()
-    df['rolling_mean'] = df['입국자수'].rolling(window=window, min_periods=1).mean()
-    df['rolling_std'] = df['입국자수'].rolling(window=window, min_periods=1).std().fillna(0)
-    df['diff'] = df['입국자수'].diff().fillna(0)
-    lower, upper = df['입국자수'].quantile([0.05, 0.95])
-    df['clipped'] = df['입국자수'].clip(lower=lower, upper=upper)
-    return df
+        try:
+            xgb_window = 24
+            train_xgb = create_xgb_features(group, xgb_window)
+            last_vals = group.tail(xgb_window).copy()
+            preds = []
+            for i in range(24):
+                temp = pd.concat([last_vals, pd.DataFrame({'입국자수':[np.nan]}, index=[0])], ignore_index=True)
+                temp = create_xgb_features(temp, xgb_window)
+                xgb = XGBRegressor(n_estimators=100, random_state=42)
+                xgb.fit(
+                    train_xgb[[c for c in train_xgb.columns if c.startswith('lag_')] + ['rolling_mean','rolling_std','diff','clipped']],
+                    train_xgb['입국자수']
+                )
+                X_pred = temp.iloc[-1][[c for c in temp.columns if c.startswith('lag_')] + ['rolling_mean','rolling_std','diff','clipped']].values.reshape(1, -1)
+                pred = xgb.predict(X_pred)[0]
+                preds.append(pred)
+                last_vals = pd.concat([last_vals, pd.DataFrame({'입국자수':[pred]}, index=[0])], ignore_index=True)
+                last_vals = last_vals.iloc[1:]
+            test_df['xgb_pred'] = preds
+        except Exception as e:
+            test_df['xgb_pred'] = np.nan
 
-def create_xgb_features(df, window=12):
-    df = df.copy()
-    for lag in range(1, window+1):
-        df[f'lag_{lag}'] = df['입국자수'].shift(lag)
-    df = add_volatility_features(df, window=3)
-    df = df.dropna().reset_index(drop=True)
-    return df
+        # LSTM
+        try:
+            seq_len = 24
+            group_features = group[['입국자수', '성수기', '명절']].values
+            scaler = StandardScaler()
+            scaled = scaler.fit_transform(group_features)
+            X_lstm = []
+            for i in range(seq_len, len(group)):
+                X_lstm.append(scaled[i-seq_len:i])
+            X_lstm = np.array(X_lstm)
+            y_lstm = scaled[seq_len:, 0]
+            model_lstm = Sequential([
+                LSTM(80, input_shape=(seq_len, 3), return_sequences=True),
+                LSTM(40),
+                Dense(16, activation='relu'),
+                Dense(1)
+            ])
+            model_lstm.compile(loss='mse', optimizer='adam')
+            model_lstm.fit(X_lstm, y_lstm, epochs=30, batch_size=8, verbose=0, callbacks=[EarlyStopping(patience=5, restore_best_weights=True)])
+            last_seq = scaled[-seq_len:]
+            preds = []
+            for i in range(24):
+                feat = np.array([[0, test_df.iloc[i]['성수기'], test_df.iloc[i]['명절']]])
+                X_pred = last_seq.reshape(1, seq_len, 3)
+                pred_scaled = model_lstm.predict(X_pred, verbose=0)[0,0]
+                inv = scaler.inverse_transform(np.array([[pred_scaled, test_df.iloc[i]['성수기'], test_df.iloc[i]['명절']]]))[0,0]
+                preds.append(inv)
+                last_seq = np.vstack([last_seq[1:], scaler.transform([[inv, test_df.iloc[i]['성수기'], test_df.iloc[i]['명절']]])])
+            test_df['lstm_pred'] = preds
+        except Exception as e:
+            test_df['lstm_pred'] = np.nan
 
-xgb_window = 12
-train_xgb = create_xgb_features(train_df, xgb_window)
-test_xgb = create_xgb_features(pd.concat([train_df.tail(xgb_window), test_df], ignore_index=True), xgb_window)
-features = [col for col in train_xgb.columns if col.startswith('lag_')] \
-            + ['rolling_mean','rolling_std','diff','clipped']
-xgb = XGBRegressor(n_estimators=100, random_state=42)
-xgb.fit(train_xgb[features], train_xgb['입국자수'])
-test_df['xgb_pred'] = xgb.predict(test_xgb[features])
+        # Stacking (단순 평균)
+        test_df['stacking_pred'] = test_df[['prophet_pred', 'xgb_pred', 'lstm_pred']].mean(axis=1)
+        test_df['국적'] = nation
+        test_df['목적'] = purpose
 
-# 6. LSTM: '성수기','명절' 다중 feature 활용 (24개월 시퀀스)
-seq_len = 24  # ★ 24개월 시퀀스로 수정
+        # ds를 항상 문자열 날짜로 저장
+        test_df['ds'] = pd.to_datetime(test_df['ds']).dt.strftime('%Y-%m-%d')
 
-all_df = pd.concat([train_df, test_df], ignore_index=True)
-all_features = all_df[['입국자수', '성수기', '명절']].values
-scaler = StandardScaler()
-scaled_train = scaler.fit_transform(all_features[:len(train_df)])
-scaled_all = scaler.transform(all_features)
+        return test_df[['국적','목적','ds','prophet_pred','xgb_pred','lstm_pred','stacking_pred']]
+    except Exception as e:
+        print(f"예외 발생 [{nation}/{purpose}] : {e}")
+        return None
 
-X_lstm, y_lstm = [], []
-for i in range(seq_len, len(train_df)):
-    X_lstm.append(scaled_train[i-seq_len:i])
-    y_lstm.append(scaled_train[i, 0])
-X_lstm = np.array(X_lstm)
-y_lstm = np.array(y_lstm)
+if __name__ == "__main__":
+    df = pd.read_csv("data/목적별국적별입국소계제거.csv", encoding='cp949')
+    df = df.dropna()
+    df['입국자수'] = df['입국자수'].astype(float)
+    df['ds'] = pd.to_datetime(df['년'].astype(str) + df['월'].astype(str).str.zfill(2), format='%Y%m')
 
-model_lstm = Sequential([
-    LSTM(80, input_shape=(seq_len, 3), return_sequences=True),
-    LSTM(40),
-    Dense(16, activation='relu'),
-    Dense(1)
-])
-model_lstm.compile(loss='mse', optimizer='adam')
-model_lstm.fit(
-    X_lstm, y_lstm,
-    epochs=60,
-    batch_size=8,
-    verbose=0,
-    callbacks=[EarlyStopping(patience=6, restore_best_weights=True)]
-)
+    combos = df.groupby(['국적','목적']).size().reset_index()[['국적','목적']]
+    total = len(combos)
+    print(f"\n[INFO] 예측 대상 조합: {total}개\n")
+    start_time = time.time()
 
-# Test 예측 (실제 미래 feature 사용)
-X_lstm_test = []
-for i in range(len(train_df), len(all_df)):
-    X_lstm_test.append(scaled_all[i-seq_len:i])
-X_lstm_test = np.array(X_lstm_test)
-lstm_preds_scaled = model_lstm.predict(X_lstm_test, verbose=0)
-lstm_pred_full = np.hstack([
-    lstm_preds_scaled.reshape(-1,1),
-    test_df[['성수기', '명절']].values
-])
-test_df['lstm_pred'] = scaler.inverse_transform(lstm_pred_full)[:,0]
+    job_args = []
+    for idx, row in combos.iterrows():
+        nation, purpose = row['국적'], row['목적']
+        group = df[(df['국적']==nation)&(df['목적']==purpose)].copy()
+        job_args.append((nation, purpose, group))
 
-# 7. Stacking (Meta Learner)
-stack_train = pd.DataFrame({
-    'prophet': test_df['prophet_pred'],
-    'xgb': test_df['xgb_pred'],
-    'lstm': test_df['lstm_pred']
-})
-meta = LinearRegression()
-meta.fit(stack_train, test_df['입국자수'])
-test_df['stacking_pred'] = meta.predict(stack_train)
+    results = []
+    with concurrent.futures.ProcessPoolExecutor(max_workers=4) as executor:
+        future_to_combo = {executor.submit(predict_one_combo, args): args[:2] for args in job_args}
+        for idx, future in enumerate(concurrent.futures.as_completed(future_to_combo)):
+            nation, purpose = future_to_combo[future]
+            try:
+                res = future.result()
+                if res is not None:
+                    results.append(res)
+                    print(f"[{idx+1}/{total}] {nation}-{purpose} 완료")
+                else:
+                    print(f"[{idx+1}/{total}] {nation}-{purpose} 스킵(데이터 부족)")
+            except Exception as exc:
+                print(f"[{idx+1}/{total}] {nation}-{purpose} 예외: {exc}")
 
-# 8. 평가 및 시각화
-def eval_metric(y_true, y_pred):
-    return {
-        "RMSE": mean_squared_error(y_true, y_pred, squared=False),
-        "MAPE": mean_absolute_percentage_error(y_true, y_pred)
-    }
-print("\n[성능 비교]")
-for model in ['prophet_pred','xgb_pred','lstm_pred','stacking_pred']:
-    score = eval_metric(test_df['입국자수'], test_df[model])
-    print(f"{model}: RMSE={score['RMSE']:.1f}, MAPE={score['MAPE']:.4f}")
+    elapsed = time.time() - start_time
+    if results:
+        result_df = pd.concat(results, ignore_index=True)
+        result_df.to_csv("24개월_국적목적별_향후24개월_예측.csv", index=False, encoding='utf-8-sig')
+        print(f"\n[INFO] 전체 예측 완료! → 24개월_국적목적별_향후24개월_예측.csv")
+    else:
+        print("\n[INFO] 예측 결과 없음(모든 조합 데이터 부족 등)")
 
-# test_df를 csv로 저장 (모든 예측 결과 포함)
-test_df.to_csv("data/24개월_test_df.csv", index=False, encoding='utf-8-sig')
+    print(f"[INFO] 총 소요 시간: {elapsed/60:.1f}분")
