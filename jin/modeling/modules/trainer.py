@@ -122,6 +122,46 @@ class Trainer:
         metrics["rmse_등급"] = "양호" if metrics["rmse"] <= metrics["rmse_기준값"] else "미흡"
         metrics["r2_score_등급"] = "양호" if metrics["r2_score"] >= metrics["r2_score_기준값"] else "미흡"
         metrics["mape_등급"] = "양호" if metrics["mape"] <= metrics["mape_기준값"] else "미흡"
-        metrics["f1_score_등급"] = "양호" if metrics["f1_score"] >= metrics["f1_score_기준값"] else "미흡" # F1_score는 현재 0.0으로 설정되어 있으므로 실제 계산 필요
+        
+        # F1-score 계산 및 등급 설정
+        metrics["f1_score"] = self._calculate_f1_score(y_true, y_pred, self.config.F1_SCORE_TOLERANCE_PERCENTAGE)
+        metrics["f1_score_등급"] = "양호" if metrics["f1_score"] >= metrics["f1_score_기준값"] else "미흡"
 
         return metrics
+
+    def _calculate_f1_score(self, y_true, y_pred, tolerance_percentage):
+        """
+        회귀 문제에서 F1-score를 계산합니다.
+        예측값과 실제값의 상대 오차(백분율)가 tolerance_percentage 이내일 경우 '정답'으로 간주합니다.
+        """
+        # 0으로 나누는 것을 방지하기 위해 실제값에 작은 값 추가
+        y_true_safe = np.maximum(y_true, 1e-6) 
+        
+        # 상대 오차 계산
+        relative_error = np.abs((y_pred - y_true) / y_true_safe)
+
+        # '정답' 여부 판단 (True = 정답, False = 오답)
+        is_correct = relative_error <= (tolerance_percentage / 100.0)
+
+        # True Positives, False Positives, False Negatives 계산
+        # 여기서는 '정답'을 긍정 클래스로 간주���니다.
+        # TP: 실제 정답이고 예측도 정답 (is_correct가 True)
+        # FP: 실제 오답인데 예측은 정답 (is_correct가 True인데 실제로는 오차율 초과) - 이 경우 정의가 어려움
+        # FN: 실제 정답인데 예측은 오답 (is_correct가 False인데 실제로는 오차율 이내) - 이 경우 정의가 어려움
+
+        # 회귀 문제에서 F1-score를 적용하기 위해 이진 분류 문제로 변환
+        # '정답'을 1, '오답'을 0으로 간주
+        y_true_binary = np.ones_like(y_true, dtype=int) # 모든 실제값을 '정답'으로 가정
+        y_pred_binary = is_correct.astype(int) # 예측이 허용 오차 내이면 '정답'
+
+        # precision, recall, f1_score 계산
+        # sklearn.metrics.f1_score를 사용하기 위해 import 필요
+        from sklearn.metrics import f1_score, precision_score, recall_score
+
+        # 'pos_label=1'은 '정답'을 긍정 클래스로 간주함을 의미
+        # 'zero_division=0'은 0으로 나눌 때 0을 반환하도록 설정
+        precision = precision_score(y_true_binary, y_pred_binary, pos_label=1, zero_division=0)
+        recall = recall_score(y_true_binary, y_pred_binary, pos_label=1, zero_division=0)
+        f1 = f1_score(y_true_binary, y_pred_binary, pos_label=1, zero_division=0)
+        
+        return f1

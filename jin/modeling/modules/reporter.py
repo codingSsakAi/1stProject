@@ -38,6 +38,11 @@ class Reporter:
                 hist_df['입국자수'] = np.expm1(hist_df['입국자수'])
                 ax.plot(hist_df['날짜'], hist_df['입국자수'], label='실제', color='gray', alpha=0.8, linewidth=2)
 
+            # 1. 코로나 시기 표현 (빨간색 투명 마스킹)
+            covid_start_date = pd.to_datetime(self.config.COVID_START_DATE)
+            covid_end_date = pd.to_datetime(self.config.COVID_END_DATE)
+            ax.axvspan(covid_start_date, covid_end_date, color='red', alpha=0.2, label='코로나 팬데믹 기간')
+
             # 예측 데이터 플로팅
             if purpose in results and results[purpose]:
                 predictions = results[purpose]
@@ -57,10 +62,23 @@ class Reporter:
             ax.grid(True, which='both', linestyle='--', linewidth=0.5)
             ax.tick_params(axis='x', rotation=30)
             ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda x, p: format(int(x), ',')))
+            
+            # 3. 2005-01 ~ 2025-05 까지 대략 중요한 월만 표현 예측일 잘 보이게 표현
+            # 4. 예측 시작일 전 월도 예측 입국자수 표현
+            # 5. 그래프 선 등 설명 범례 그래프에서 잘 보이게 위치
+            from matplotlib.ticker import MaxNLocator
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=10)) # 최대 10개의 주요 틱
+            ax.xaxis.set_major_formatter(plt.matplotlib.dates.DateFormatter('%Y-%m'))
+            
+            # 예측 시작 월 강조
+            if purpose in results and results[purpose]:
+                first_pred_date = pd.to_datetime(results[purpose][0]["month"])
+                ax.axvline(first_pred_date, color='blue', linestyle=':', linewidth=2, label='예측 시작')
 
-        plt.xlabel("날짜", fontsize=12)
-        plt.tight_layout(rect=[0, 0.03, 1, 0.97])
+            ax.legend(loc='upper left', bbox_to_anchor=(1, 1)) # 범례를 그래프 밖에 위치
+
         fig.suptitle(f'{nationality} 목적별 입국자 수 예측 ({start_date} ~ {end_date})', fontsize=20, y=0.99)
+        plt.tight_layout(rect=[0, 0.03, 0.95, 0.97]) # 범례 공간 확보
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         plot_path = os.path.join(self.results_dir, f"{nationality}_목적별_예측_시각화_{timestamp}.png")

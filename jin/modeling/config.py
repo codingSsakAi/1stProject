@@ -62,9 +62,13 @@ BASE_PERFORMANCE_THRESHOLDS = {
     "roc_auc": 0.75,   # ROC AUC (높을수록 좋음)
 }
 
+# --- F1-score 계산을 위한 허용 오차율 설정 ---
+# 예측값과 실제값의 상대 오차(백분율)가 이 값 이내일 경우 '정답'으로 간주합니다.
+F1_SCORE_TOLERANCE_PERCENTAGE = 10.0 # 예: 10.0은 10% 오차율 허용
+
 # --- 데이터 증강 설정 ---
 # 데이터가 부족할 때 인공적으로 데이터를 늘리는 방법입니다.
-AUGMENTATION_TARGET_MONTHS = 240 # 데이터 증강을 통해 목표로 하는 월별 데이터 수
+AUGMENTATION_TARGET_MONTHS = 360 # 데이터 증강을 통해 목표로 하는 월별 데이터 수
 AUGMENTATION_NOISE_LEVELS = [0.15, 0.25, 0.35] # 노이즈 증강 시 적용할 노이즈 수준
 AUGMENTATION_TREND_FACTORS = [0.02, 0.05, -0.02] # 트렌드 증강 시 적용할 트렌드 요인
 AUGMENTATION_SEASONAL_BOOSTS = [1.3, 1.5, 0.7] # 계절성 강화 증강 시 적용할 부스트 요인

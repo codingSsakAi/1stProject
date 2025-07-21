@@ -17,7 +17,22 @@ class Predictor:
         """미래 월별 입국자 수를 예측합니다."""
         sequence_length = self._get_sequence_length(len(self.features_data))
         current_sequence = self.features_data.tail(sequence_length).values
+        
+        # current_sequence의 유효성 검사 (행 개수)
+        if current_sequence.shape[0] < sequence_length:
+            print(f"오류: 예측을 위한 시퀀스 길이가 부족합니다. 필요한 길이: {sequence_length}, 현재 길이: {current_sequence.shape[0]}")
+            return [] # 예측을 수행할 수 없으므로 빈 리스트 반환
+
+        print(f"[DEBUG] Scaling 전 current_sequence shape: {current_sequence.shape}")
         current_sequence = self.scaler.transform(current_sequence)
+
+        # 새로운 유효성 검사: 특성(feature)의 개수 확인
+        if current_sequence.shape[1] == 0:
+            print(f"오류: 예측을 위한 특성(feature)의 개수가 0입니다. 모델 입력에 문제가 발생할 수 있습니다.")
+            return [] # 예측을 수행할 수 없으므로 빈 리스트 반환
+
+        print(f"[DEBUG] Scaling 후 current_sequence shape: {current_sequence.shape}")
+        print(f"[DEBUG] sequence_length: {sequence_length}")
 
         predictions_with_log = []
         # 마지막 실제 값은 feature 데이터에서 가져와야 하며, 이는 이미 로그 변환된 값입니다.

@@ -71,14 +71,71 @@ class DataHandler:
             df['전년동월대비증감률'] = df['전년동월대비증감률'].clip(-100, 100).fillna(0)
         return df
 
+    def _add_noise(self, df, noise_level):
+        """데이터에 노이즈를 추가하여 증강합니다."""
+        df_augmented = df.copy()
+        noise = np.random.normal(0, noise_level * df_augmented["입국자수"].std(), df_augmented.shape[0])
+        df_augmented["입국자수"] = np.maximum(0, df_augmented["입국자수"] + noise)
+        return df_augmented
+
+    def _add_trend(self, df, trend_factor):
+        """데이터에 트렌드를 추가하여 증강합니다."""
+        df_augmented = df.copy()
+        trend = np.arange(len(df_augmented)) * trend_factor
+        df_augmented["입국자수"] = np.maximum(0, df_augmented["입국자수"] * (1 + trend / 100))
+        return df_augmented
+
+    def _add_seasonal_boost(self, df, boost_factor):
+        """데이터에 계절성 부스트를 추가하여 증강합니다."""
+        df_augmented = df.copy()
+        # 월별 계절성을 고려하여 부스트 적용 (예: 여름/겨울에 더 큰 부스트)
+        # 여기서는 단순화를 위해 일괄 적용
+        df_augmented["입국자수"] = np.maximum(0, df_augmented["입국자수"] * boost_factor)
+        return df_augmented
+
     def augment_data(self, data):
         """데이터가 부족할 경우 증강합니다."""
         if len(data) >= self.config.AUGMENTATION_TARGET_MONTHS:
             return [data]
+
         print(f"데이터 증강 시작: {len(data)}개월 -> 목표 {self.config.AUGMENTATION_TARGET_MONTHS}개월")
-        # 여기에 다양한 증강 기법을 추가할 수 있습니다.
-        # 예: 노이즈 추가, 트렌드 추가, 계절성 강화 등
-        return [data] # 현재는 원본 데이터만 반환
+        augmented_datasets = [data.copy()]
+        current_length = len(data)
+
+        while current_length < self.config.AUGMENTATION_TARGET_MONTHS:
+            new_data = augmented_datasets[-1].copy() # 마지막으로 증강된 데이터셋 사용
+            
+            # 노이즈 증강
+            if self.config.AUGMENTATION_NOISE_LEVELS:
+                noise_level = np.random.choice(self.config.AUGMENTATION_NOISE_LEVELS)
+                new_data = self._add_noise(new_data, noise_level)
+            
+            # 트렌드 증강
+            if self.config.AUGMENTATION_TREND_FACTORS:
+                trend_factor = np.random.choice(self.config.AUGMENTATION_TREND_FACTORS)
+                new_data = self._add_trend(new_data, trend_factor)
+            
+            # 계절성 강화 증강
+            if self.config.AUGMENTATION_SEASONAL_BOOSTS:
+                seasonal_boost = np.random.choice(self.config.AUGMENTATION_SEASONAL_BOOSTS)
+                new_data = self._add_seasonal_boost(new_data, seasonal_boost)
+            
+            augmented_datasets.append(new_data)
+            current_length += len(new_data) # 증강된 데이터셋의 길이를 더함
+
+            if len(augmented_datasets) > 100: # 무한 루프 방지
+                print("경고: 데이터 증강이 너무 많이 반복되어 중단합니다. 목표 길이에 도달하지 못했습니다.")
+                break
+
+        # 목표 길이에 맞춰 데이터셋을 자르거나 병합
+        final_augmented_data = pd.concat(augmented_datasets, ignore_index=True)
+        final_augmented_data = final_augmented_data.drop_duplicates(subset=["날짜", "국적", "목적"]).sort_values("날짜").reset_index(drop=True)
+        
+        if len(final_augmented_data) > self.config.AUGMENTATION_TARGET_MONTHS:
+            final_augmented_data = final_augmented_data.tail(self.config.AUGMENTATION_TARGET_MONTHS).reset_index(drop=True)
+
+        print(f"데이터 증강 완료: {len(data)}개월 -> {len(final_augmented_data)}개월")
+        return [final_augmented_data]
 
     def preprocess_for_model(self, features, purpose):
         """모델 학습을 위해 데이터를 스케일링하고 시퀀스를 생성합니다."""
