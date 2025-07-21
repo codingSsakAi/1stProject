@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>외국인 입국자 예측 및 뉴스</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>🌍 외국인 입국자 예측 시스템</h1>
+
+    <div class="section">
+        <h2>📅 예측 설정</h2>
+        <form id="predict-form">
+            <label>국적:
+                <select id="country-select"></select>
+            </label>
+            <label>목적:
+                <select id="purpose-select"></select>
+            </label>
+            <label>시작 연월:
+                <input type="month" id="start-ym">
+            </label>
+            <label>종료 연월:
+                <input type="month" id="end-ym">
+            </label>
+            <button type="submit">예측 실행</button>
+        </form>
+    </div>
+
+    <div class="section" id="result-section" style="display:none;">
+        <h2>📈 예측 결과</h2>
+        <div id="result-list"></div>
+    </div>
+
+    <div class="section">
+        <h2>📰 최근 한국 관련 뉴스</h2>
+        <div id="news-container"></div>
+        <button id="load-more-news">더 보기</button>
+    </div>
+
+    <script>
+        let currentPage = 1;
+
+        async function loadDropdowns() {
+            const countries = await fetch('/api/countries').then(res => res.json());
+            const purposes = await fetch('/api/purposes').then(res => res.json());
+
+            const cSelect = document.getElementById('country-select');
+            countries.forEach(c => {
+                const option = document.createElement('option');
+                option.value = c;
+                option.textContent = c;
+                cSelect.appendChild(option);
+            });
+
+            const pSelect = document.getElementById('purpose-select');
+            purposes.forEach(p => {
+                const option = document.createElement('option');
+                option.value = p;
+                option.textContent = p;
+                pSelect.appendChild(option);
+            });
+        }
+
+        async function loadNews(page = 1) {
+            const news = await fetch(`/api/news?page=${page}`).then(res => res.json());
+            const container = document.getElementById('news-container');
+
+            news.news.forEach(item => {
+                const div = document.createElement('div');
+                div.classList.add('news-item');
+                div.innerHTML = `<a href="${item.link}" target="_blank"><strong>${item.title}</strong></a><br><small>${item.pubDate}</small><p>${item.description}</p>`;
+                container.appendChild(div);
+            });
+
+            if (news.total <= page * news.page_size) {
+                document.getElementById('load-more-news').style.display = 'none';
+            }
+        }
+
+        document.getElementById('load-more-news').addEventListener('click', () => {
+            currentPage++;
+            loadNews(currentPage);
+        });
+
+        document.getElementById('predict-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const country = document.getElementById('country-select').value;
+            const purpose = document.getElementById('purpose-select').value;
+            const startYM = document.getElementById('start-ym').value;
+            const endYM = document.getElementById('end-ym').value;
+
+            const body = {
+                combos: [{ country, purpose }],
+                start_ym: startYM,
+                end_ym: endYM
+            };
+
+            const res = await fetch('/api/predict', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            }).then(r => r.json());
+
+            const resultList = document.getElementById('result-list');
+            resultList.innerHTML = '';
+            res.results.forEach(r => {
+                if (r.error) {
+                    resultList.innerHTML += `<p style="color:red;">${r.error}</p>`;
+                } else {
+                    const title = `<h3>${r.country} / ${r.purpose}</h3>`;
+                    const list = r.yms.map((ym, idx) => `${ym}: ${r.values[idx].toLocaleString()}명`).join('<br>');
+                    resultList.innerHTML += `<div>${title}${list}</div><br>`;
+                }
+            });
+
+            document.getElementById('result-section').style.display = 'block';
+        });
+
+        loadDropdowns();
+        loadNews();
+    </script>
+    <canvas id="forecastChart" width="800" height="400"></canvas>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+function drawForecastChart(yms, values, label) {
+    const ctx = document.getElementById('forecastChart').getContext('2d');
+    if (window.myChart) window.myChart.destroy(); // 기존 그래프 제거
+
+    window.myChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: yms,
+            datasets: [{
+                label: label,
+                data: values,
+                borderColor: 'rgba(54, 162, 235, 1)',
+                borderWidth: 2,
+                fill: false,
+                tension: 0.3
+            }]
+        },
+        options: {
+            scales: {
+                x: { title: { display: true, text: '연월' }},
+                y: { title: { display: true, text: '예측 입국자 수' }, beginAtZero: true }
+            }
+        }
+    });
+}
+</script>
+
+</body>
+</html>
