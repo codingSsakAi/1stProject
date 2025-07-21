@@ -1,0 +1,22 @@
+body {
+    background: #f8fafc;
+    font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif !important;
+}
+.form-label {
+    font-weight: bold;
+    color: #1565c0;
+}
+select#country1, select#purpose1 { border: 2px solid #90caf9; background: #e3f2fd; }
+select#country2, select#purpose2 { border: 2px solid #ffe082; background: #fffde7; }
+#compare-graph {
+    border: 1px solid #bbb;
+    border-radius: 8px;
+    background: #fff;
+    margin-top: 10px;
+    min-height: 400px;
+    height: 500px;  /* 추가: Plotly와 일치 */
+    max-width: 100%;
+}
+#compare-title { color: #212121; }
+.btn-primary { background: #1565c0; border-color: #1565c0; }
+footer { color: #888; }
