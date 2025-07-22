@@ -8,16 +8,11 @@ from tensorflow.keras.layers import Input, LSTM, Dense
 from tensorflow.keras.layers import Dropout
 from tensorflow.keras.layers import Bidirectional
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from datetime import datetime
 import platform
 import os
 from sklearn.metrics import mean_absolute_error, mean_squared_error
-from adjustText import adjust_text
 import warnings
-
-# Suppress FancyArrowPatch warnings globally
-warnings.filterwarnings("ignore", message=".*FancyArrowPatch.*")
 
 # Mac에서 한글 폰트 설정
 if platform.system() == "Darwin":
@@ -27,7 +22,7 @@ plt.rcParams["axes.unicode_minus"] = False
 
 # 시계열 데이터를 입력받아 (window 개월씩 잘라서) LSTM에 넣을 학습 데이터를 만듭니다
 # 예: [1,2,3,4,5]에서 window=3일 경우 → X=[1,2,3], [2,3,4], y=4,5
-def prepare_sequences(data, window, exog=None):
+def prepare_sequences(data, window):
     X, y = [], []
     for i in range(len(data) - window):
         X.append(data[i : i + window])
@@ -619,10 +614,10 @@ if __name__ == "__main__":
         시작월 = input("예측 시작월을 입력하세요 (예: 2025-06): ").strip()
         종료월 = input("예측 종료월을 입력하세요 (예: 2026-05): ").strip()
         if not valid_yyyymm(시작월) or not valid_yyyymm(종료월):
-            print("⚠️ 올바른 형식(YYYY-MM)으로 입력해주세요.")
+            print("[경고] 올바른 형식(YYYY-MM)으로 입력해주세요.")
             continue
         if 시작월 >= 종료월:
-            print("⚠️ 예측 시작월은 종료월보다 이전이어야 합니다.")
+            print("[경고] 예측 시작월은 종료월보다 이전이어야 합니다.")
             continue
         break
 
