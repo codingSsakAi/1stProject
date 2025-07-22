@@ -38,6 +38,8 @@
         <button id="load-more-news">더 보기</button>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
     <script>
         let currentPage = 1;
 
@@ -104,13 +106,80 @@
 
             const resultList = document.getElementById('result-list');
             resultList.innerHTML = '';
-            res.results.forEach(r => {
+
+            res.results.forEach((r, idx) => {
                 if (r.error) {
-                    resultList.innerHTML += `<p style="color:red;">${r.error}</p>`;
+                    const errorP = document.createElement('p');
+                    errorP.style.color = 'red';
+                    errorP.textContent = r.error;
+                    resultList.appendChild(errorP);
                 } else {
-                    const title = `<h3>${r.country} / ${r.purpose}</h3>`;
-                    const list = r.yms.map((ym, idx) => `${ym}: ${r.values[idx].toLocaleString()}명`).join('<br>');
-                    resultList.innerHTML += `<div>${title}${list}</div><br>`;
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'chart-block';
+                    wrapper.style.marginBottom = '40px';
+
+                    const title = document.createElement('h3');
+                    title.textContent = `📌 ${r.country} / ${r.purpose}`;
+                    wrapper.appendChild(title);
+
+                    const list = document.createElement('div');
+                    list.innerHTML = r.yms.map((ym, i) =>
+                        `${ym}: ${r.values[i].toLocaleString()}명`).join('<br>');
+                    wrapper.appendChild(list);
+
+                    const canvas = document.createElement('canvas');
+                    const canvasId = `forecastChart-${idx}`;
+                    canvas.id = canvasId;
+                    canvas.width = 800;
+                    canvas.height = 300;
+                    canvas.style.marginTop = '10px';
+                    wrapper.appendChild(canvas);
+                    resultList.appendChild(wrapper);
+
+                    // 실제 + 예측 그래프
+                    const labels = [...r.hist_yms, ...r.yms];
+                    const actualLen = r.hist_yms.length;
+                    const predictedLen = r.yms.length;
+
+                    const ctx = canvas.getContext('2d');
+                    new Chart(ctx, {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [
+                                {
+                                    label: '📊 실제 입국자 수',
+                                    data: r.hist_values,
+                                    borderColor: 'gray',
+                                    borderWidth: 2,
+                                    fill: false,
+                                    tension: 0.3
+                                },
+                                {
+                                    label: '🔮 예측 입국자 수',
+                                    data: Array(actualLen).fill(null).concat(r.values),
+                                    borderColor: 'rgba(54, 162, 235, 1)',
+                                    borderWidth: 2,
+                                    borderDash: [5, 5],
+                                    fill: false,
+                                    tension: 0.3
+                                }
+                            ]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: true,
+                            scales: {
+                                x: {
+                                    title: { display: true, text: '연월' }
+                                },
+                                y: {
+                                    title: { display: true, text: '입국자 수' },
+                                    beginAtZero: true
+                                }
+                            }
+                        }
+                    });
                 }
             });
 
@@ -120,36 +189,5 @@
         loadDropdowns();
         loadNews();
     </script>
-    <canvas id="forecastChart" width="800" height="400"></canvas>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-function drawForecastChart(yms, values, label) {
-    const ctx = document.getElementById('forecastChart').getContext('2d');
-    if (window.myChart) window.myChart.destroy(); // 기존 그래프 제거
-
-    window.myChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: yms,
-            datasets: [{
-                label: label,
-                data: values,
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 2,
-                fill: false,
-                tension: 0.3
-            }]
-        },
-        options: {
-            scales: {
-                x: { title: { display: true, text: '연월' }},
-                y: { title: { display: true, text: '예측 입국자 수' }, beginAtZero: true }
-            }
-        }
-    });
-}
-</script>
-
 </body>
 </html>

@@ -148,11 +148,15 @@ def run_forecast(국적_입력, 목적_입력, 예측연도, 예측월리스트)
         results.append({
             "country": 국적,
             "purpose": 목적,
-            "yms": future['년월'].dt.strftime('%Y-%m').tolist(),
-            "values": future['예측입국자수'].astype(int).tolist(),
+            "yms": future['년월'].dt.strftime('%Y-%m').tolist(),         # 예측 연월
+            "values": future['예측입국자수'].astype(int).tolist(),       # 예측값
+            "hist_yms": data['년월'].dt.strftime('%Y-%m').tolist(),      # 과거 연월
+            "hist_values": y_raw.astype(int).tolist(),                   # 과거 실제 입국자 수
             "r2": round(r2, 4),
             "mape": round(mape * 100, 2),
             "confidence": round(신뢰도, 1)
         })
+
+
 
     return results
