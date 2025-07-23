@@ -1,101 +1,27 @@
+<!-- index.html - 외국인 방문객 예측 서비스 랜딩 (단축+주석) -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
-    <title>입국자수 비교 예측 프로그램</title>
+    <title>외국인 방문객 빅데이터 예측 | 외국인 입국자 예측 서비스</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@700;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css?family=Noto+Sans+KR:400,700&display=swap" rel="stylesheet">
-    <style>
-        .custom-header { min-height: 80px; font-size: 1.15rem; }
-        .globe-icon svg { vertical-align: middle; }
-        .checkbox-area { margin-top: 6px; margin-bottom: 10px; }
-        .checkbox-area label { margin-right: 15px; font-weight: 500; cursor:pointer; }
-        @media (max-width: 600px) {
-            .custom-header h3 { font-size: 1.1rem; }
-            .globe-icon { width: 28px !important; height: 28px !important; }
-        }
-    </style>
 </head>
 <body>
-<header class="custom-header p-4 bg-dark text-white mb-3">
-    <div class="container d-flex align-items-center justify-content-between">
-        <div class="d-flex align-items-center">
-            <img src="/static/images/globe.png" alt="지구본" class="me-2 globe-icon" style="width:36px; height:36px;">
-            <h3 class="m-0" style="font-size:2rem;">
-                입국자수 비교 예측 프로그램
-            </h3>
-        </div>
-        <nav>
-            <ul class="nav">
-                <li class="nav-item">
-                    <a class="nav-link text-white fw-bold" href="#" id="menu-predict">예측하기</a>
-                </li>
-                <li class="nav-item">
-                    <a class="nav-link text-white fw-bold" href="#" id="menu-news">뉴스 스크랩</a>
-                </li>
-            </ul>
-        </nav>
-    </div>
-</header>
-
-<div class="container">
-    <div id="predict-section">
-        <div class="row mb-3">
-            <div class="col-12 d-flex flex-wrap align-items-end">
-                <div class="me-2">
-                    <label class="form-label">국가</label>
-                    <select class="form-select" id="country1"></select>
-                </div>
-                <div class="me-2">
-                    <label class="form-label">목적</label>
-                    <select class="form-select" id="purpose1"></select>
-                </div>
-                <div class="me-2">
-                    <label class="form-label d-block">시작</label>
-                    <select class="form-select w-auto d-inline-block" id="start-year"></select>
-                    <select class="form-select w-auto d-inline-block" id="start-month"></select>
-                </div>
-                <div class="me-2 align-self-end">~</div>
-                <div class="me-2">
-                    <label class="form-label d-block">끝</label>
-                    <select class="form-select w-auto d-inline-block" id="end-year"></select>
-                    <select class="form-select w-auto d-inline-block" id="end-month"></select>
-                </div>
-                <!-- 코로나 옵션과 비교 버튼도 같은 라인에 -->
-                <label class="form-label ms-3 mb-0" for="covid-option" style="min-width:90px;">코로나 유무</label>
-                <select class="form-select me-2" id="covid-option" style="width:170px; min-width:150px;">
-                    <option value="exclude">코로나 제외</option>
-                    <option value="weighted">코로나 가중치</option>
-                    <option value="include">코로나 포함</option>
-                </select>
-                <label class="form-label mb-0" for="covid-visual" style="min-width:90px;">코로나 표시</label>
-                <select class="form-select me-2" id="covid-visual" style="width:120px; min-width:100px;">
-                    <option value="show">표시</option>
-                    <option value="hide">미표시</option>
-                </select>
-                <button class="btn btn-primary ms-auto" id="compare-btn" style="height:48px; min-width:60px;">비교</button>
+    <div class="landing-bg">
+        <div>
+            <div class="landing-title">외국인 방문객 빅데이터 예측</div>
+            <div class="landing-desc">
+                팬데믹 이후 글로벌 관광 시장이 빠르게 회복되며,<br>
+                한국 방문 외국인 입국자 수도 꾸준히 증가하고 있습니다.<br>
+                입국 패턴은 다양한 요인에 따라 변동성이 커<br>
+                정확한 예측이 정책과 산업 운영에 매우 중요합니다.<br>
+                본 프로젝트는 딥러닝과 공공 데이터를 활용해<br>
+                외국인 입국자 수를 예측하고, 데이터 기반 관광 전략을 지원합니다.
             </div>
+            <button class="landing-btn" onclick="location.href='/predict'">빅데이터 예측 시작하기</button>
         </div>
-        <div class="checkbox-area" id="purpose-checkboxes"></div>
-        <div class="mb-2 fs-5 fw-bold" id="compare-title"></div>
-        <div id="compare-graph" style="min-height:400px;height:500px;"></div>
     </div>
-    <!-- 뉴스 스크랩 탭 -->
-    <div id="news-section" style="display:none;">
-        <h4 class="mb-3">다가오는 방한 행사/축제 뉴스</h4>
-        <ul id="news-list" class="list-group"></ul>
-        <nav>
-            <ul class="pagination justify-content-center" id="news-pagination"></ul>
-        </nav>
-    </div>
-</div>
-
-<footer class="p-3 bg-light text-center mt-4">임시 풋터: 입국자수 비교 예측 프로그램</footer>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<!-- 메인 JS 분리 -->
-<script src="/static/main.js"></script>
 </body>
 </html>
