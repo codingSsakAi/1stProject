@@ -1,294 +1,296 @@
-let countryList = [], purposeList = [];
-let latestCovidVisual = 'show'; // 코로나 구간 시각화 on/off (초기: 표시)
-let allPurposes = []; // 목적 전체 목록 저장 (체크박스 생성용)
-let selectedPurposeTraces = {};
+// main.js
+// [외국인 방문객 예측 서비스] 메인 JS (그래프, 뉴스, UI 제어 전담)
+// 주석은 보존하며, 로직은 최대한 간결하게 단축
 
-// 목적에서 '기타' 제거 함수
-function filterPurposes(list) {
-    return list.filter(v => v !== "기타");
-}
+let allCountries = [], allPurposes = [],
+    colors = ['#007bff','#e94e77','#44b39d','#ffc857','#3a7ca5','#7fcd91','#ae5a41','#d72660','#479761','#e4b363'],
+    lastPredictResults = null, lastCombos = null, currentCheckboxState = {};
 
-// 상단 메뉴 토글
-document.getElementById('menu-predict').onclick = function(e) {
-    e.preventDefault();
-    document.getElementById('predict-section').style.display = 'block';
-    document.getElementById('news-section').style.display = 'none';
-};
-document.getElementById('menu-news').onclick = function(e) {
-    e.preventDefault();
-    document.getElementById('predict-section').style.display = 'none';
-    document.getElementById('news-section').style.display = 'block';
-    loadNewsList(1);
+// 드롭다운 옵션 채우기
+const setSelectOptions = (id, list, def) => {
+    const el = document.getElementById(id);
+    el.innerHTML = list.map(v => `<option value="${v}">${v}</option>`).join('');
+    if (def !== undefined) el.value = def;
 };
 
-// 코로나 구간 표시/미표시 드롭다운 이벤트
-document.getElementById('covid-visual').onchange = function() {
-    latestCovidVisual = this.value;
-    document.getElementById('compare-btn').click(); // 그래프 다시 그림
+// 국가/목적 목록 서버에서 로드
+const fetchCountries = () =>
+    fetch('/api/countries').then(res => res.json()).then(res => {
+        allCountries = res;
+        setSelectOptions('country1', ["전체", ...allCountries]);
+    });
+const fetchPurposes = () =>
+    fetch('/api/purposes').then(res => res.json()).then(res => {
+        allPurposes = res.filter(x => x !== "기타"); // 기타 제외
+        setSelectOptions('purpose1', ["전체", ...allPurposes]);
+    });
+
+// 연/월 선택기 초기화
+const setYearMonthSelect = (startYearId, startMonthId, endYearId, endMonthId, minYear, maxYear) => {
+    const years = Array.from({length: maxYear - minYear + 1}, (_, i) => minYear + i);
+    const months = Array.from({length: 12}, (_, i) => i + 1);
+    setSelectOptions(startYearId, years, 2025);
+    setSelectOptions(endYearId, years, 2025);
+    setSelectOptions(startMonthId, months, 1);
+    setSelectOptions(endMonthId, months, 12);
 };
 
-function setSelectOptions(id, options, defaultValue, withNone) {
-    let sel = document.getElementById(id);
-    sel.innerHTML = '';
-    if (withNone) {
-        let opt = document.createElement('option');
-        opt.value = "미선택";
-        opt.text = "미선택";
-        sel.appendChild(opt);
-    }
-    options.forEach(v=>{
-        let opt = document.createElement('option');
-        opt.value = v;
-        opt.text = v;
-        sel.appendChild(opt);
-    });
-    sel.value = defaultValue || options[0];
-}
+// 메인 진입점
+window.onload = () => {
+    fetchCountries();
+    fetchPurposes();
+    setYearMonthSelect('start-year','start-month','end-year','end-month',2005,2026);
 
-// 국가/목적 불러오기
-fetch('/api/countries').then(res=>res.json()).then(list=>{
-    countryList = list;
-    setSelectOptions('country1', countryList, countryList[0], false);
-});
-fetch('/api/purposes').then(res=>res.json()).then(list=>{
-    // '기타' 제거, '전체'는 유지
-    purposeList = filterPurposes(list);
-    setSelectOptions('purpose1', purposeList, purposeList[0], false);
-    // 목적 전체 목록 저장(그래프에 사용)
-    allPurposes = purposeList.filter(p => p !== "전체");
-});
-
-// 연/월 셋팅
-const minYear = 2005, maxYear = 2025, minMonth = 1, maxMonth = 5;
-setYearMonthSelect('start-year', 'start-month', 'end-year', 'end-month', minYear, minMonth, maxYear, maxMonth);
-
-document.getElementById('compare-btn').onclick = function(){
-    let combos = [
-        {country: document.getElementById('country1').value, purpose: document.getElementById('purpose1').value}
-    ];
-    let startYear = parseInt(document.getElementById('start-year').value);
-    let startMonth = parseInt(document.getElementById('start-month').value);
-    let endYear = parseInt(document.getElementById('end-year').value);
-    let endMonth = parseInt(document.getElementById('end-month').value);
-    let startYM = `${startYear}-${String(startMonth).padStart(2,'0')}`;
-    let endYM = `${endYear}-${String(endMonth).padStart(2,'0')}`;
-    let covidOption = document.getElementById('covid-option').value;
-
-    // 전체 선택 시: 목적별+전체 여러 개 combo를 만듦
-    let purpose = document.getElementById('purpose1').value;
-    let fetchCombos = [];
-    if(purpose === "전체") {
-        fetchCombos.push({country: combos[0].country, purpose: "전체"});
-        allPurposes.forEach(p=>{
-            fetchCombos.push({country: combos[0].country, purpose: p});
-        });
-    } else {
-        fetchCombos = combos;
-    }
-
-    fetch('/api/predict', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            combos: fetchCombos,
-            start_ym: startYM,
-            end_ym: endYM,
-            covid_option: covidOption
-        })
-    }).then(res=>res.json()).then(res=>{
-        drawGraphWithCheckbox(res.results, 'compare-graph', 'compare-title', fetchCombos);
-    });
+    document.getElementById('compare-btn').onclick = onCompareBtnClick;
+    document.getElementById('show-detail-btn').onclick = toggleDetailSummary;
+    document.getElementById('covid-visual').onchange = function() {
+        for (let t of document.getElementsByClassName('covid-region'))
+            t.style.display = (this.value === "show") ? "" : "none";
+    };
+    // 뉴스/예측 탭 전환
+    document.getElementById('menu-news').onclick = () => {
+        document.getElementById('news-section').style.display = "";
+        document.getElementById('predict-section').style.display = "none";
+        loadNewsList();
+    };
+    document.getElementById('menu-predict').onclick = () => {
+        document.getElementById('news-section').style.display = "none";
+        document.getElementById('predict-section').style.display = "";
+    };
 };
 
-function toKoMonth(x){
-    let [yy, mm] = x.split('-');
-    return `${yy}년 ${parseInt(mm)}월`;
-}
-
-// 목적별 체크박스/흐리게 기능 포함 그래프 그리기
-function drawGraphWithCheckbox(results, divId, titleId, combos) {
-    let traces = [];
-    let colors = [
-        '#1b77c2',  // 전체 (파랑)
-        '#43aa8b',  // 공용 (초록)
-        '#2196f3',  // 관광 (스카이블루)
-        '#bc5090',  // 상용 (보라핑크)
-        '#ffb703',  // 유학연수 (노랑)
-    ];
-    let allY = [];
-    let purposeNames = [];
-    let countryName = results[0]?.country || "";
-    let mainPurpose = combos.length > 1 ? "전체" : results[0]?.purpose || "";
-    let subPurposeStr = "";
-
-    // 목적 리스트 만들기
-    results.forEach((r, idx)=>{
-        if (!r || r.error) return;
-        let yArr = (r.values||[]).map(v=>isNaN(v)||v==null?0:v);
-        allY = allY.concat(yArr);
-        if(r.purpose !== "전체") purposeNames.push(r.purpose);
-
-        // *** 목적명 customdata 및 hovertemplate, hoverlabel (테두리색 적용) ***
-        traces.push({
-            x: r.yms,
-            y: yArr,
-            name: r.purpose,
-            mode: 'lines+markers',
-            line: {color: colors[idx % colors.length], width: 3, dash: 'solid'},
-            marker: {color: colors[idx % colors.length], size: 9},
-            opacity: (selectedPurposeTraces[r.purpose]===false)?0.2:1,
-            customdata: Array(r.yms.length).fill(r.purpose), // 목적명 배열
-            hovertemplate: 
-                '<b>목적: %{customdata}</b><br>' + // 목적명 강조
-                '%{x|%Y년 %m월}<br>' +              // x축(연월) 한글 표시
-                '입국자: %{y:,}<extra></extra>',    // 입국자수 콤마
-            hoverlabel: {
-                font: {size: 19, family: 'Noto Sans KR, Malgun Gothic, sans-serif'},
-                bgcolor: "#fff",
-                bordercolor: colors[idx % colors.length] // 목적별 선 색상과 동일!
-            }
-        });
-    });
-
-    let yMax = Math.max(...allY, 0);
-    let yaxis_range = yMax === 0 ? [0, 10000] : [0, Math.ceil(yMax * 1.1)];
-
-    // 타이틀 구성
-    let globeIcon = '<img src="/static/images/globe.png" alt="지구본" style="width:22px;height:22px;vertical-align:middle;margin-bottom:3px;margin-right:4px;">';
-    if(mainPurpose === "전체" && purposeNames.length > 0) {
-        subPurposeStr = `<span style="font-size:0.95em;color:#888;">(${purposeNames.join(', ')})</span>`;
-    }
-    let titleHtml = `${globeIcon}: ${countryName} | 목적: ${mainPurpose} ${subPurposeStr}`;
-    document.getElementById(titleId).innerHTML = titleHtml;
-
-    // 목적 체크박스(전체 제외)
-    if(combos.length > 1){
-        let html = "";
-        // 1. 전체 포함! 목적 순서: 전체, 공용, 관광, 상용, 유학연수 ...
-        let allNames = ['전체', ...purposeNames];
-        allNames.forEach(name=>{
-            const checked = (selectedPurposeTraces[name]!==false)?'checked':'';
-            html += `<label style="margin-right:22px;font-weight:500;cursor:pointer;">
-                        <input type="checkbox" value="${name}" ${checked}> ${name}
-                    </label>`;
-        });
-        document.getElementById("purpose-checkboxes").innerHTML = html;
-        document.querySelectorAll("#purpose-checkboxes input[type=checkbox]").forEach(chk=>{
-            chk.onchange = function(){
-                selectedPurposeTraces[this.value] = this.checked;
-                drawGraphWithCheckbox(results, divId, titleId, combos);
-            }
-        });
-    } else {
-        document.getElementById("purpose-checkboxes").innerHTML = "";
-        selectedPurposeTraces = {};
-    }
-
-    // 그래프 데이터 없으면 안내 표시
-    if(traces.every(t=>!t.y.some(v=>v>0))) {
-        document.getElementById(divId).innerHTML =
-            "<div style='text-align:center;padding:100px 0;color:#aaa;font-size:1.5em;'>데이터가 없습니다.</div>";
-        return;
-    }
-
-    // 코로나 구간
-    let shapes = [];
-    if (latestCovidVisual === 'show' && traces[0] && traces[0].x) {
-        shapes = [{
-            type: 'rect',
-            xref: 'x',
-            yref: 'paper',
-            x0: "2020-03",
-            x1: "2022-10",
-            y0: 0, y1: 1,
-            fillcolor: 'rgba(255,0,0,0.13)',
-            line: {width:0}
-        }];
-    }
-
-    Plotly.newPlot(divId, traces, {
-        xaxis: {
-            title: '월',
-            tickangle: -45,
-            tickvals: traces[0]?.x,
-            ticktext: traces[0]?.x.map(toKoMonth)
-        },
-        yaxis: {
-            title: '입국자 수',
-            rangemode: 'tozero',
-            tickformat: ',d',
-            range: yaxis_range,
-            automargin:true
-        },
-        margin: { t:30, b:130, l:60, r:10 },
-        height: 500,
-        legend: {orientation: "h", yanchor: "bottom", y: -0.45, xanchor: "center", x: 0.5, font: { size: 16 }},
-        font: {family: 'Noto Sans KR, Malgun Gothic, sans-serif'},
-        shapes: shapes
-    }, {responsive: true});
-}
-
-// --------- 이하 기존 뉴스 스크랩 코드 동일 ----------
-function setYearMonthSelect(sy, sm, ey, em, minY, minM, maxY, maxM) {
-    let years = [];
-    for (let y = minY; y <= maxY; y++) years.push(y);
-    let months = [];
-    for (let m = 1; m <= 12; m++) months.push(m);
-    [sy, ey].forEach(id=>{
-        let sel = document.getElementById(id);
-        sel.innerHTML = '';
-        years.forEach(y=>{
-            let opt = document.createElement('option');
-            opt.value = y;
-            opt.text = y + '년';
-            sel.appendChild(opt);
-        });
-    });
-    [sm, em].forEach(id=>{
-        let sel = document.getElementById(id);
-        sel.innerHTML = '';
-        months.forEach(m=>{
-            let opt = document.createElement('option');
-            opt.value = m;
-            opt.text = m + '월';
-            sel.appendChild(opt);
-        });
-    });
-}
-
-function loadNewsList(page=1) {
-    const ul = document.getElementById('news-list');
-    ul.innerHTML = "<li class='list-group-item'>뉴스를 불러오는 중...</li>";
+// 뉴스 리스트 로딩 (페이지네이션 포함)
+const loadNewsList = (page = 1) => {
     fetch('/api/news?page=' + page)
         .then(res => res.json())
         .then(data => {
-            ul.innerHTML = '';
-            if(data.news.length === 0) {
-                ul.innerHTML = "<li class='list-group-item'>뉴스가 없습니다.</li>";
+            let list = document.getElementById('news-list');
+            list.innerHTML = '';
+            if (!data.news || data.news.length === 0) {
+                list.innerHTML = "<li class='list-group-item'>뉴스가 없습니다.</li>";
                 document.getElementById('news-pagination').innerHTML = '';
                 return;
             }
             data.news.forEach(item => {
-            ul.innerHTML += `<li class="list-group-item">
-                <a href="${item.link}" target="_blank">${item.title.replace(/<b>|<\/b>/g, '')}</a>
-                <span class="badge bg-secondary">${item.pubDate}</span>
-            </li>`;
+                list.innerHTML += `<li class='list-group-item'>
+                    <a href="${item.link}" target="_blank">${item.title}</a>
+                    <br><small>${item.pubDate}</small>
+                    <div class="text-muted small">${item.description}</div>
+                </li>`;
             });
-            renderNewsPagination(data.total, data.page, data.page_size);
-        })
-        .catch(()=>{
-            ul.innerHTML = "<li class='list-group-item'>뉴스를 불러오지 못했습니다.</li>";
-            document.getElementById('news-pagination').innerHTML = '';
+            // 페이지네이션 UI
+            let total = data.news_total || data.news.length, pageCount = Math.ceil(total / 20), curr = page, nav = '';
+            if (curr > 1)
+                nav += `<li class="page-item"><a class="page-link" href="#" onclick="loadNewsList(${curr-1});return false;">이전</a></li>`;
+            for (let i = 1; i <= pageCount; i++)
+                nav += `<li class="page-item ${i == curr ? 'active' : ''}"><a class="page-link" href="#" onclick="loadNewsList(${i});return false;">${i}</a></li>`;
+            if (curr < pageCount)
+                nav += `<li class="page-item"><a class="page-link" href="#" onclick="loadNewsList(${curr+1});return false;">다음</a></li>`;
+            document.getElementById('news-pagination').innerHTML = nav;
         });
+};
+
+// 예측 버튼 클릭: 조건 조합 구성, API 요청, 결과 그래프 표시
+function onCompareBtnClick() {
+    const c = document.getElementById('country1').value, p = document.getElementById('purpose1').value,
+    combos =
+        c === "전체" && p === "전체" ? [...allPurposes.map(pu => ({country: "전체", purpose: pu})), {country: "전체", purpose: "전체"}] :
+        c === "전체" ? [{country: "전체", purpose: p}, {country: "전체", purpose: "전체"}] :
+        p === "전체" ? [...allPurposes.map(pu => ({country: c, purpose: pu})), {country: c, purpose: "전체"}] :
+        [{country: c, purpose: p}, {country: c, purpose: "전체"}];
+
+    const startYM = `${document.getElementById('start-year').value}-${String(document.getElementById('start-month').value).padStart(2, '0')}`;
+    const endYM = `${document.getElementById('end-year').value}-${String(document.getElementById('end-month').value).padStart(2, '0')}`;
+
+    fetch('/api/predict', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({combos, start_ym: startYM, end_ym: endYM})
+    })
+    .then(res => res.json())
+    .then(res => {
+        lastPredictResults = res.results;
+        lastCombos = combos;
+        drawGraphWithCheckbox(res.results, 'compare-graph', 'compare-title', combos);
+        document.getElementById('detail-box').style.display = "none";
+        document.getElementById('show-detail-btn').textContent = "자세히";
+    });
 }
-function renderNewsPagination(total, page, pageSize) {
-    const totalPages = Math.ceil(total / pageSize);
-    let html = '';
-    for(let i=1;i<=totalPages;i++) {
-        html += `<li class="page-item${i===page?' active':''}"><a class="page-link" href="#" onclick="loadNewsList(${i});return false;">${i}</a></li>`;
+
+// 예측 결과 그래프 + 체크박스 동기화
+function drawGraphWithCheckbox(results, divId, titleId, combos) {
+    let traces = [], colorIdx = 0, xticks = [], yMin = null, yMax = null;
+    const c = document.getElementById('country1').value,
+          p = document.getElementById('purpose1').value,
+          checkboxPurposes = p === "전체" ? ["전체", ...allPurposes] : ["전체", p];
+
+    checkboxPurposes.forEach(purpose => {
+        let r = (c === "전체")
+            ? results.find(res => res.country === "전체" && res.purpose === purpose)
+            : results.find(res => res.country === c && res.purpose === purpose);
+        if (!r) return;
+        let yArr = (r.values || []).map(v => isNaN(v) || v == null ? 0 : v);
+        if (yArr.length === 0) return;
+        let isActual = r.is_actual || [], splitIdx = isActual.findIndex(a => a === false),
+            color = colors[colorIdx++ % colors.length], traceName = purpose;
+        if (splitIdx !== -1 && splitIdx > 0) {
+            let xBefore = r.yms.slice(0, splitIdx + 1), yBefore = yArr.slice(0, splitIdx + 1),
+                xAfter = r.yms.slice(splitIdx), yAfter = yArr.slice(splitIdx);
+            traces.push({
+                x: xBefore, y: yBefore, name: traceName, mode: 'lines+markers',
+                line: {color, width: 3, dash: 'solid'}, marker: {color, size: 9}, opacity: 1,
+                customdata: Array(xBefore.length).fill(traceName),
+                hovertemplate: `<b>${traceName}</b><br>%{x}<br>입국자: %{y:,}명<extra></extra>`, showlegend: true
+            });
+            traces.push({
+                x: [r.yms[splitIdx - 1], r.yms[splitIdx]],
+                y: [yArr[splitIdx - 1], yArr[splitIdx]],
+                name: traceName + " (연결)", mode: 'lines+markers',
+                line: {color, width: 3, dash: 'dot'}, marker: {color, size: 9}, opacity: 1,
+                customdata: Array(2).fill(traceName + " (연결)"),
+                hovertemplate: `<b>${traceName} (연결)</b><br>%{x}<br>입국자: %{y:,}명<extra></extra>`, showlegend: false
+            });
+            traces.push({
+                x: xAfter, y: yAfter, name: traceName + " (예측)", mode: 'lines+markers',
+                line: {color, width: 3, dash: 'dot'}, marker: {color, size: 9, symbol: 'circle-open'}, opacity: 1,
+                customdata: Array(xAfter.length).fill(traceName + " (예측)"),
+                hovertemplate: `<b>${traceName} (예측)</b><br>%{x}<br>입국자: %{y:,}명<extra></extra>`, showlegend: true
+            });
+        } else {
+            traces.push({
+                x: r.yms, y: yArr, name: traceName, mode: 'lines+markers',
+                line: {color, width: 3, dash: 'solid'}, marker: {color, size: 9}, opacity: 1,
+                customdata: Array(r.yms.length).fill(traceName),
+                hovertemplate: `<b>${traceName}</b><br>%{x}<br>입국자: %{y:,}명<extra></extra>`, showlegend: true
+            });
+        }
+        xticks = r.yms;
+        let ymin = Math.min(...yArr), ymax = Math.max(...yArr);
+        if (yMin === null || ymin < yMin) yMin = ymin;
+        if (yMax === null || ymax > yMax) yMax = ymax;
+    });
+
+    // x축, y축, 코로나기간 표시 등 그래프 옵션
+    let displayXTicks = xticks.map(d => { let [y, m] = d.split('-'); return `${y}년 ${m}월`; });
+    let covidRegions = [];
+    if (document.getElementById('covid-visual').value === 'show')
+        covidRegions.push({
+            type: 'rect', xref: 'x', yref: 'paper',
+            x0: '2020-03', x1: '2022-10', y0: 0, y1: 1,
+            fillcolor: '#ffe0e0', opacity: 0.35, line: {width: 0}, layer: 'below'
+        });
+    Plotly.newPlot(divId, traces, {
+        margin: {t: 80, r: 60, l: 80, b: 100},
+        xaxis: {tickangle: 45, showgrid: true, title: {text: "날짜", standoff: 35}, tickmode: 'array', tickvals: xticks, ticktext: displayXTicks, automargin: true},
+        yaxis: {title: '입국자수', rangemode: "tozero", range: [0, Math.ceil(yMax * 1.03)], tickformat: ",d", height: 600, ticksuffix: "명"},
+        hovermode: 'closest', shapes: covidRegions,
+        legend: {orientation: "h", x: 0.5, xanchor: "center", y: 1.20, font: {size: 14}},
+        plot_bgcolor: "#fff", paper_bgcolor: "#fff",
+        xaxis_showline: true, xaxis_linecolor: "#3a7ca5", xaxis_linewidth: 2,
+        yaxis_showline: true, yaxis_linecolor: "#3a7ca5", yaxis_linewidth: 2,
+    }, {responsive: true, displayModeBar: true, displaylogo: false});
+    drawPurposeCheckboxes(checkboxPurposes);
+}
+
+// 체크박스 UI 렌더링 및 그래프 opacity 조정
+function drawPurposeCheckboxes(purposeList) {
+    const area = document.getElementById('purpose-checkboxes');
+    area.innerHTML = '';
+    purposeList.forEach((p, idx) => {
+        const id = `purpose-cb-${idx}`;
+        area.innerHTML += `<label><input type="checkbox" checked id="${id}" data-purpose="${p}">${p === '전체' ? '전체' : `<span style="font-size:0.9em">${p}</span>`}</label>`;
+        currentCheckboxState[p] = true;
+    });
+    purposeList.forEach((p, idx) => {
+        document.getElementById(`purpose-cb-${idx}`).onchange = function() {
+            currentCheckboxState[p] = this.checked;
+            const graphDiv = document.getElementById('compare-graph');
+            const update = {opacity: graphDiv.data.map(t =>
+                (t.customdata && t.customdata[0] && t.customdata[0].includes(p)) ? (this.checked ? 1 : 0.15) : (t.opacity || 1)
+            )};
+            Plotly.restyle(graphDiv, update, Array.from({length: update.opacity.length}, (_, i) => i));
+        };
+    });
+}
+
+// 자세히 버튼 토글
+const toggleDetailSummary = () => {
+    let detailDiv = document.getElementById('detail-box'),
+        btn = document.getElementById('show-detail-btn');
+    if (detailDiv.style.display === "block") {
+        detailDiv.style.display = "none";
+        btn.textContent = "자세히";
+    } else {
+        showDetailSummary();
+        btn.textContent = "닫기";
     }
-    document.getElementById('news-pagination').innerHTML = html;
-}
-document.addEventListener('DOMContentLoaded', function(){
-    document.getElementById('compare-btn').click();
-});
+};
+
+// 예측 결과 통계/신뢰도 요약 박스 표시
+const showDetailSummary = () => {
+    let detailDiv = document.getElementById('detail-box');
+    detailDiv.innerHTML = '';
+    if (!lastPredictResults || lastPredictResults.length === 0) {
+        detailDiv.style.display = "block";
+        detailDiv.innerHTML = "<div class='alert alert-warning'>먼저 비교 버튼으로 그래프를 그려주세요.</div>";
+        return;
+    }
+    const c = document.getElementById('country1').value,
+          p = document.getElementById('purpose1').value,
+          isCountryAll = (c === "전체"), isPurposeAll = (p === "전체"),
+          filterRes = (fn) => lastPredictResults.filter(fn).flatMap(r => [r.r2, r.mape, r.confidence]);
+    let r2list = [], mapelist = [], conflist = [];
+    lastPredictResults.forEach(r => {
+        if (isCountryAll && isPurposeAll) {
+            if (r.r2 != null) r2list.push(r.r2);
+            if (r.mape != null) mapelist.push(r.mape);
+            if (r.confidence != null) conflist.push(r.confidence);
+        } else if (!isCountryAll && isPurposeAll) {
+            if (r.country === c) {
+                if (r.r2 != null) r2list.push(r.r2);
+                if (r.mape != null) mapelist.push(r.mape);
+                if (r.confidence != null) conflist.push(r.confidence);
+            }
+        } else if (isCountryAll && !isPurposeAll) {
+            if (r.purpose === p) {
+                if (r.r2 != null) r2list.push(r.r2);
+                if (r.mape != null) mapelist.push(r.mape);
+                if (r.confidence != null) conflist.push(r.confidence);
+            }
+        } else {
+            if (r.country === c && r.purpose === p) {
+                if (r.r2 != null) r2list.push(r.r2);
+                if (r.mape != null) mapelist.push(r.mape);
+                if (r.confidence != null) conflist.push(r.confidence);
+            }
+        }
+    });
+    // 통계 함수 단일화
+    const arrStat = arr => {
+        arr = arr.flatMap(v => Array.isArray(v) ? v : [v]).filter(x => x != null && !isNaN(x));
+        const avg = arr.length ? arr.reduce((s,x)=>s+x,0)/arr.length : null;
+        return {
+            min: arr.length ? Math.min(...arr) : null,
+            mean: avg,
+            max: arr.length ? Math.max(...arr) : null
+        };
+    };
+    const r2stat = arrStat(r2list), mapestat = arrStat(mapelist), confstat = arrStat(conflist);
+
+    // 평가 텍스트
+    const evalR2 = r2 => r2 == null ? "-" : r2 >= 0.9 ? "매우 좋음" : r2 >= 0.7 ? "보통" : "주의(신뢰 낮음)";
+    const evalMape = m => m == null ? "-" : m <= 10 ? "매우 좋음" : m <= 20 ? "보통" : "주의(오차 큼)";
+    const evalConf = c => c == null ? "-" : c >= 90 ? "매우 좋음" : c >= 80 ? "보통" : "주의(신뢰 낮음)";
+
+    detailDiv.style.display = "block";
+    detailDiv.innerHTML =
+        `<div class="card p-3">
+        <b>예측 구간 성능 요약</b>
+        <ul class="mb-2">
+            <li><b>r2</b> (설명력): <span>최소: ${r2stat.min === null ? "-" : r2stat.min.toFixed(4)} / 평균: ${r2stat.mean === null ? "-" : r2stat.mean.toFixed(4)} / 최대: ${r2stat.max === null ? "-" : r2stat.max.toFixed(4)}</span> <span>→ ${evalR2(r2stat.mean)}</span></li>
+            <li><b>mape</b> (평균예측오차): <span>최소: ${mapestat.min === null ? "-" : mapestat.min.toFixed(2)}% / 평균: ${mapestat.mean === null ? "-" : mapestat.mean.toFixed(2)}% / 최대: ${mapestat.max === null ? "-" : mapestat.max.toFixed(2)}%</span> <span>→ ${evalMape(mapestat.mean)}</span></li>
+            <li><b>confidence</b> (신뢰도): <span>최소: ${confstat.min === null ? "-" : confstat.min.toFixed(1)} / 평균: ${confstat.mean === null ? "-" : confstat.mean.toFixed(1)} / 최대: ${confstat.max === null ? "-" : confstat.max.toFixed(1)}</span> <span>→ ${evalConf(confstat.mean)}</span></li>
+        </ul>
+        <span class="text-secondary small">* 평가는 평균값 기준 (모델/기간마다 달라질 수 있음)</span>
+        </div>`;
+};
