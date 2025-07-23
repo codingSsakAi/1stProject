@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>입국자수 예측 프로그램</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css?family=Noto+Sans+KR:400,700&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="custom-header p-4 bg-dark text-white mb-3">
+    <div class="container d-flex align-items-center justify-content-between">
+        <!-- 전체를 a 태그로 감쌈 -->
+        <a href="/" class="d-flex align-items-center" style="text-decoration:none; color:inherit;">
+            <img src="/static/images/globe.png" alt="지구본" class="me-2 globe-icon" style="width:36px; height:36px;">
+            <h3 class="m-0" style="font-size:2rem;">
+                입국자수 예측 프로그램
+            </h3>
+        </a>
+        <nav>
+            <ul class="nav">
+                <li class="nav-item">
+                    <a class="nav-link text-white fw-bold" href="#" id="menu-predict">예측하기</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link text-white fw-bold" href="#" id="menu-news">뉴스 스크랩</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+</header>
+
+<div class="container flex-grow-1 d-flex flex-column justify-content-center" style="min-height:0;">
+    <div id="predict-section">
+        <div class="row mb-3">
+            <div class="col-12 d-flex flex-wrap align-items-end">
+                <div class="me-2">
+                    <label class="form-label" for="country1">국가</label>
+                    <select class="form-select" id="country1"></select>
+                </div>
+                <div class="me-2">
+                    <label class="form-label" for="purpose1">목적</label>
+                    <select class="form-select" id="purpose1"></select>
+                </div>
+                <div class="me-2">
+                    <label class="form-label" for="start-year">시작</label>
+                    <select class="form-select w-auto d-inline-block" id="start-year"></select>
+                    <select class="form-select w-auto d-inline-block" id="start-month"></select>
+                </div>
+                <div class="me-2 align-self-end">~</div>
+                <div class="me-2">
+                    <label class="form-label" for="end-year">끝</label>
+                    <select class="form-select w-auto d-inline-block" id="end-year"></select>
+                    <select class="form-select w-auto d-inline-block" id="end-month"></select>
+                </div>
+                <label class="form-label mb-0 ms-3" for="covid-visual" style="min-width:90px;">코로나 표시</label>
+                <select class="form-select me-2" id="covid-visual" style="width:120px; min-width:100px;">
+                    <option value="show">표시</option>
+                    <option value="hide">미표시</option>
+                </select>
+                <button class="btn btn-primary ms-auto" id="compare-btn" style="height:48px; min-width:60px;">검색</button>
+            </div>
+        </div>
+        <div class="checkbox-area" id="purpose-checkboxes"></div>
+        <div class="mb-2 fs-5 fw-bold" id="compare-title"></div>
+        <div id="compare-graph"></div>
+        <div class="mb-3 text-end">
+            <button id="show-detail-btn" class="btn btn-outline-secondary">자세히</button>
+        </div>
+        <div id="detail-box" class="mb-3" style="display:none;"></div>
+    </div>
+    <!-- 뉴스 스크랩 탭 -->
+    <div id="news-section" style="display:none;">
+        <div class="news-container">
+            <h4 class="mb-3">다가오는 방한 행사/축제 뉴스</h4>
+            <ul id="news-list" class="list-group"></ul>
+            <nav>
+                <ul class="pagination justify-content-center" id="news-pagination"></ul>
+            </nav>
+        </div>
+    </div>
+</div>
+
+<hr>
+<footer class="text-center small">
+    <span class="footer-icon">🌱</span>
+    <span style="font-weight:600;">© 2025 CodingSSAK Co.</span>
+    <br>
+    <span style="font-size:0.94em">
+        본 서비스는 연구 및 비상업적 목적에 한해 사용 가능합니다.<br>
+        <b>한국관광데이터랩</b>, <b>관광지식정보시스템</b>, <b>KOSIS 국가통계포털</b> 데이터 기반
+    </span>
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="/static/main.js"></script>
+</body>
+</html>
