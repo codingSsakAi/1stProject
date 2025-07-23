@@ -1,138 +1,80 @@
+# app.py
+# [외국인 방문객 예측 서비스] 백엔드 (최대 단축, 주석 보존)
 from flask import Flask, request, jsonify, render_template
-import pandas as pd
-import os
-import requests
+import pandas as pd, os
 from datetime import datetime
 from dotenv import load_dotenv
 
-# .env 환경변수 불러오기
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '.env'))
-NAVER_CLIENT_ID = os.getenv('CLIENT_ID')
-NAVER_CLIENT_SECRET = os.getenv('CLIENT_SECRET')
 
-app = Flask(
-    __name__,
-    static_folder='static',
-    template_folder='templates'
-)
+app = Flask(__name__, static_folder='static', template_folder='templates')
 
+# 데이터 준비 (국가/목적/기간별 실제·예측값)
 DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', '실제데이터.csv')
-df = pd.read_csv(DATA_PATH, encoding='cp949')
-df['년'] = df['년'].astype(int)
-df['월'] = df['월'].astype(int)
-df['연월'] = df['년'].astype(str) + '-' + df['월'].astype(str).str.zfill(2)
+FORECAST_PATH = os.path.join(os.path.dirname(__file__), 'data', '2025-06_2026-12_예측값.csv')
+df_real = pd.read_csv(DATA_PATH, encoding='cp949')
+df_real['년'] = df_real['년'].astype(int); df_real['월'] = df_real['월'].astype(int)
+df_real['연월'] = df_real['년'].astype(str) + '-' + df_real['월'].astype(str).str.zfill(2)
+df_fore = pd.read_csv(FORECAST_PATH, encoding='utf-8-sig'); df_fore['연월'] = df_fore['연월'].astype(str)
 
-min_ym = df['연월'].min()
-max_ym = df['연월'].max()
-
-actual_dict = {
-    (row['국적'], row['목적'], row['연월']): int(row['입국자수'])
-    for _, row in df.iterrows()
-}
-
-unique_countries = sorted(df['국적'].unique())
-unique_purposes = sorted(df['목적'].unique())
-
+# 불필요 국가 제외
+df_real, df_fore = (df_real[df_real['국적'] != "러시아(연방)"], df_fore[df_fore['국가'] != "러시아(연방)"])
+unique_countries = sorted(df_real['국적'].unique())
+unique_purposes = [p for p in sorted(df_real['목적'].unique()) if p != "기타"]
+min_ym, max_ym = df_real['연월'].min(), '2026-12'
 def make_ym_list(start_ym, end_ym):
     return pd.date_range(start=start_ym+'-01', end=end_ym+'-01', freq='MS').strftime('%Y-%m').tolist()
 
-def calc_sum(country, purpose, ym):
-    """전체/합계용: 인자로 None이 오면 전체를 의미"""
-    if country == "전체" and purpose == "전체":
-        v = df[df['연월'] == ym]['입국자수'].sum()
-    elif country == "전체":
-        v = df[(df['목적'] == purpose) & (df['연월'] == ym)]['입국자수'].sum()
-    elif purpose == "전체":
-        v = df[(df['국적'] == country) & (df['연월'] == ym)]['입국자수'].sum()
-    else:
-        v = actual_dict.get((country, purpose, ym), 0)
-    if pd.isna(v): return 0
-    try: return int(v)
-    except: return 0
-
-def get_values(country, purpose, start_ym, end_ym):
-    if (start_ym < min_ym) or (end_ym > max_ym):
-        return [], [], [], f'데이터 범위는 {min_ym} ~ {max_ym}입니다.'
-    yms = make_ym_list(start_ym, end_ym)
-    values, is_actual = [], []
-    for ym in yms:
-        v = calc_sum(country, purpose, ym)
-        values.append(v)
-        is_actual.append(True)
-    return yms, values, is_actual, None
-
-iso_map = {
-    "대한민국": "KOR", "일본": "JPN", "미국": "USA", "중국": "CHN",
-    # 실제데이터에 존재하는 국가만 추가 (필요시 확장)
-}
-
 @app.route('/')
-def index():
-    return render_template('index.html')
-
+def index(): return render_template('index.html')
+@app.route('/predict')
+def predict(): return render_template('predict.html')
 @app.route('/api/countries')
-def api_countries():
-    return jsonify(["전체"] + unique_countries)
-
+def api_countries(): return jsonify(unique_countries)
 @app.route('/api/purposes')
-def api_purposes():
-    return jsonify(["전체"] + unique_purposes)
-
-@app.route('/api/iso3')
-def api_iso3():
-    return jsonify({k: iso_map.get(k, '') for k in unique_countries})
+def api_purposes(): return jsonify(unique_purposes)
 
 @app.route('/api/predict', methods=['POST'])
 def api_predict():
-    req = request.get_json()
-    combos = req['combos']
-    start_ym = req['start_ym']
-    end_ym = req['end_ym']
+    req = request.get_json(); combos = req['combos']; start_ym = req['start_ym']; end_ym = req['end_ym']; yms = make_ym_list(start_ym, end_ym)
+    real_pivot = df_real.pivot_table(index='연월', columns=['국적', '목적'], values='입국자수', aggfunc='sum', fill_value=0)
+    fore_pivot = df_fore.pivot_table(index='연월', columns=['국가', '목적'], values='예측입국자수', aggfunc='sum', fill_value=0)
     results = []
     for combo in combos:
-        country = combo['country']
-        purpose = combo['purpose']
-        if country == "미선택" or purpose == "미선택":
-            results.append(None)
-            continue
-        yms, values, is_actual, err = get_values(country, purpose, start_ym, end_ym)
-        if err:
-            results.append({"error": err})
-        else:
-            results.append({
-                "country": country,
-                "purpose": purpose,
-                "yms": yms,
-                "values": values,
-                "is_actual": is_actual
-            })
+        c, p = combo['country'], combo['purpose']
+        vals, is_actual, r2, mape, conf = [], [], [], [], []
+        for ym in yms:
+            v = 0
+            if ym <= '2025-05':
+                if c == "전체" and p == "전체": v = real_pivot.loc[ym].sum() if ym in real_pivot.index else 0
+                elif c == "전체": v = sum(val for (cc, pp), val in (real_pivot.loc[ym] if ym in real_pivot.index else {}).items() if pp == p)
+                elif p == "전체": v = sum(val for (cc, pp), val in (real_pivot.loc[ym] if ym in real_pivot.index else {}).items() if cc == c)
+                else: v = real_pivot.loc[ym][(c, p)] if ym in real_pivot.index and (c, p) in real_pivot.columns else 0
+                is_actual.append(True)
+            else:
+                if c == "전체" and p == "전체": v = fore_pivot.loc[ym].sum() if ym in fore_pivot.index else 0
+                elif c == "전체": v = sum(val for (cc, pp), val in (fore_pivot.loc[ym] if ym in fore_pivot.index else {}).items() if pp == p)
+                elif p == "전체": v = sum(val for (cc, pp), val in (fore_pivot.loc[ym] if ym in fore_pivot.index else {}).items() if cc == c)
+                else: v = fore_pivot.loc[ym][(c, p)] if ym in fore_pivot.index and (c, p) in fore_pivot.columns else 0
+                is_actual.append(False)
+            vals.append(int(v) if not pd.isna(v) else 0)
+            if ym > '2025-05':
+                row = df_fore[(df_fore['국가'] == c) & (df_fore['목적'] == p) & (df_fore['연월'] == ym)]
+                r2.append(float(row.iloc[0]['r2']) if len(row) and not pd.isna(row.iloc[0]['r2']) else None)
+                mape.append(float(row.iloc[0]['mape']) if len(row) and not pd.isna(row.iloc[0]['mape']) else None)
+                conf.append(float(row.iloc[0]['confidence']) if len(row) and not pd.isna(row.iloc[0]['confidence']) else None)
+        results.append({"country": c, "purpose": p, "yms": yms, "values": vals, "is_actual": is_actual, "r2": r2, "mape": mape, "confidence": conf})
     return jsonify({"results": results})
 
-# 뉴스 API 영역 (생략 시 기존 코드 그대로 두면 됩니다)
-BAD_WORDS = [
-    "사망", "사고", "사건", "범죄", "폭력", "논란", "사기", "불법", "피해", "징역", "재판",
-    "폭우", "화재", "감염", "확진", "부상", "부정", "문제", "논란",
-    "총선", "대선", "정당", "의원", "국회", "대통령", "정치", "정책", "청와대", "선거",
-    "야당", "여당", "국회의원", "보수", "진보"
-]
+# 뉴스 API (필터·정렬·중복제거)
+BAD_WORDS = ["사망","사고","사건","범죄","폭력","논란","사기","불법","피해","징역","재판","폭우","화재","감염","확진","부상","부정","문제","논란",
+"총선","대선","정당","의원","국회","대통령","정치","정책","청와대","선거","야당","여당","국회의원","보수","진보"]
 def naver_news_search(query, display=50, sort='date'):
-    url = "https://openapi.naver.com/v1/search/news.json"
-    headers = {
-        "X-Naver-Client-Id": NAVER_CLIENT_ID,
-        "X-Naver-Client-Secret": NAVER_CLIENT_SECRET
-    }
-    params = {
-        "query": query,
-        "display": display,
-        "start": 1,
-        "sort": sort
-    }
-    res = requests.get(url, headers=headers, params=params)
-    if res.status_code == 200:
-        return res.json()['items']
-    else:
-        print('Naver API Error:', res.status_code, res.text)
-        return []
+    import requests
+    url, cid, csec = "https://openapi.naver.com/v1/search/news.json", os.getenv("CLIENT_ID"), os.getenv("CLIENT_SECRET")
+    headers = {"X-Naver-Client-Id": cid, "X-Naver-Client-Secret": csec}
+    res = requests.get(url, headers=headers, params={"query": query, "display": display, "start": 1, "sort": sort})
+    return res.json()['items'] if res.status_code == 200 else []
 
 def filter_after_date_and_badwords(items, min_date):
     result = []
@@ -140,49 +82,28 @@ def filter_after_date_and_badwords(items, min_date):
         try:
             pub_date = datetime.strptime(item['pubDate'], "%a, %d %b %Y %H:%M:%S %z")
             text = (item['title'] or '') + ' ' + (item['description'] or '')
-            if any(bad in text for bad in BAD_WORDS):
-                continue
+            if any(bad in text for bad in BAD_WORDS): continue
             if pub_date >= min_date:
-                result.append({
-                    "title": item['title'],
-                    "description": item['description'],
-                    "link": item['link'],
-                    "pubDate": pub_date.strftime("%Y-%m-%d")
-                })
-        except Exception as e:
-            continue
+                result.append({"title": item['title'], "description": item['description'], "link": item['link'], "pubDate": pub_date.strftime("%Y-%m-%d")})
+        except: continue
     return result
 
 @app.route('/api/news')
 def api_news():
-    keywords = request.args.get('keywords')
-    page = int(request.args.get('page', 1))
-    page_size = 20
-    if keywords:
-        keywords = keywords.split(',')
-    else:
-        keywords = [
-            "한국 축제", "한국 행사", "서울 전시회", "K-POP 콘서트", "외국인 체험 프로그램",
-            "국제박람회", "국제컨퍼런스", "한국 예정 이벤트", "한국 대회", "한국 콘서트", "동계 축체", "봄 축제"
-        ]
+    keywords = (request.args.get('keywords') or "").split(',') if request.args.get('keywords') else [
+        "한국 축제", "한국 행사", "서울 전시회", "K-POP 콘서트", "외국인 체험 프로그램",
+        "국제박람회", "국제컨퍼런스", "한국 예정 이벤트", "한국 대회", "한국 콘서트", "동계 축제", "봄 축제"
+    ]
+    page = int(request.args.get('page', 1)); page_size = 20
     min_date = datetime(2025, 5, 1, tzinfo=datetime.now().astimezone().tzinfo)
-    all_news = []
-    for kw in keywords:
-        items = naver_news_search(kw, display=50, sort='date')
-        filtered = filter_after_date_and_badwords(items, min_date)
-        all_news.extend(filtered)
-    seen = set()
-    unique_news = []
-    for n in all_news:
+    all_news = [n for kw in keywords for n in filter_after_date_and_badwords(naver_news_search(kw, 50, 'date'), min_date)]
+    # 중복 제거 및 정렬
+    seen, unique_news = set(), []
+    for n in sorted(all_news, key=lambda x: x['pubDate'], reverse=True):
         if n['link'] not in seen:
-            seen.add(n['link'])
-            unique_news.append(n)
-    unique_news = sorted(unique_news, key=lambda x: x['pubDate'], reverse=True)
-    total = len(unique_news)
-    start = (page-1)*page_size
-    end = start + page_size
-    paged_news = unique_news[start:end]
-    return jsonify({"news": paged_news, "total": total, "page": page, "page_size": page_size})
+            seen.add(n['link']); unique_news.append(n)
+    start, end = (page-1)*page_size, (page)*page_size
+    return jsonify({"news": unique_news[start:end], "total": len(unique_news), "page": page, "page_size": page_size})
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5050, debug=True)

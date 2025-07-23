@@ -1,22 +1,58 @@
+/* style.css - 외국인 방문객 예측 서비스 (단축화+주석 보존) */
+
+/* 레이아웃 및 폰트 */
+html, body { height: 100%; min-height: 100%; margin: 0; padding: 0; }
 body {
-    background: #f8fafc;
+    display: flex; flex-direction: column; min-height: 100vh;
     font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif !important;
+    background: #f8fafc;
 }
-.form-label {
-    font-weight: bold;
-    color: #1565c0;
-}
-select#country1, select#purpose1 { border: 2px solid #90caf9; background: #e3f2fd; }
-select#country2, select#purpose2 { border: 2px solid #ffe082; background: #fffde7; }
+
+/* 메인 컨텐츠, 그래프 */
+.main-content { flex: 1 0 auto; min-height: 0; padding-bottom: 52px; padding-top: 14px; }
+#compare-graph, #compare-graph * { border: none !important; box-shadow: none !important; outline: none !important; }
 #compare-graph {
-    border: 1px solid #bbb;
-    border-radius: 8px;
-    background: #fff;
-    margin-top: 10px;
-    min-height: 400px;
-    height: 500px;  /* 추가: Plotly와 일치 */
-    max-width: 100%;
+    border: 2px solid #3a7ca5; border-radius: 8px; background: #fff;
+    margin-top: 10px; min-height: 540px; height: 550px; margin-bottom: 35px;
 }
-#compare-title { color: #212121; }
-.btn-primary { background: #1565c0; border-color: #1565c0; }
-footer { color: #888; }
+
+/* 드롭다운/버튼 스타일 */
+.form-label { font-weight: bold; color: #2563eb; font-size: 1.07rem; margin-right: 32px; }
+.form-label:last-child { margin-right: 0; }
+select.form-select,
+select#country1, select#purpose1,
+select#start-year, select#end-year, select#start-month, select#end-month, select#covid-visual {
+    border: 2px solid #2563eb; background: #e3edfd; color: #222;
+    min-width: 120px; max-width: 220px; margin-right: 8px; font-weight: 500;
+    transition: border 0.18s, box-shadow 0.18s;
+}
+select.form-select:focus { border-color: #1749a6; box-shadow: 0 0 0 2px #a3c3fa66; }
+#compare-btn { min-width: 70px; margin-left: 18px; background: #2563eb; border-color: #2563eb; color: #fff; font-weight: bold; }
+#compare-btn:hover { background: #1749a6; border-color: #1749a6; }
+
+/* 체크박스, 뉴스, 기타 */
+.checkbox-area { margin-top: 6px; margin-bottom: 10px; }
+.checkbox-area label { margin-right: 15px; font-weight: 500; cursor:pointer; }
+.purpose-faded { opacity: 0.15 !important; }
+.news-container { padding-top: 28px; max-width: 1080px; margin: 0 auto; padding-left: 32px; padding-right: 32px; }
+#news-list .list-group-item { border: none; border-bottom: 1px solid #ececec; padding: 0.8rem 0 0.6rem 0; background: none; }
+#news-list { margin-bottom: 32px; }
+
+/* 랜딩 전용 */
+.landing-bg {
+    min-height: 100vh; width: 100vw;
+    background: linear-gradient(rgba(20,30,40,0.52),rgba(12,18,32,0.58)), url('/static/images/경복궁.png') center center / cover no-repeat;
+    display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;
+}
+.landing-title { font-family: 'Noto Sans KR', 'Malgun Gothic', Arial, sans-serif; font-size: 3.4rem; font-weight: 900; color: #fff; text-shadow: 0 2px 16px rgba(0,0,0,0.24); margin-bottom: 30px; letter-spacing: 1px; }
+.landing-desc { color: #ecf0f6; font-size: 1.12rem; max-width: 600px; margin: 0 auto 38px auto; line-height: 1.7; text-align: center; font-weight: 400; text-shadow: 0 2px 14px rgba(0,0,0,0.21); }
+.landing-btn { display: inline-block; font-size: 1.17rem; font-weight: bold; padding: 14px 50px; border-radius: 40px; background: #2563eb; border: none; color: #fff; box-shadow: 0 2px 16px rgba(41,48,85,0.13); transition: background .14s; margin-top: 10px; margin-bottom: 5px; text-align: center; }
+.landing-btn:hover { background: #1749a6; }
+@media (max-width: 700px) { .landing-title { font-size: 2.2rem; } }
+
+/* 푸터 */
+footer {
+    flex-shrink: 0; font-size: 0.93em; line-height: 1.08; margin-top: 4px; margin-bottom: 2px; padding: 0;
+    color: #888; background: none; max-width: 540px; margin-left: auto; margin-right: auto; word-break: keep-all;
+}
+footer .footer-icon { font-weight: 600; vertical-align: -0.15em; }
