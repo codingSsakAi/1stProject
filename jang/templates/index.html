@@ -30,10 +30,9 @@
             </div>
         </div>
         <div class="text-end">
-            <button class="btn btn-primary">예측 실행</button>
+            <button class="btn btn-primary" type="submit" id="predict-btn">예측 실행</button>
         </div>
     </form>
-
     <div id="graph-container" class="mt-5"></div>
 </div>
 
@@ -45,6 +44,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const startYm        = document.getElementById('start-ym');
     const endYm          = document.getElementById('end-ym');
     const graphContainer = document.getElementById('graph-container');
+    const predictBtn     = document.getElementById('predict-btn');
 
     fetch('/api/countries')
       .then(r => r.json())
@@ -57,86 +57,105 @@ document.addEventListener('DOMContentLoaded', () => {
     predictForm.addEventListener('submit', async e => {
         e.preventDefault();
         graphContainer.innerHTML = '';
+        predictBtn.disabled = true;
+        predictBtn.textContent = '예측중...';
 
         const country = country1.value;
         const purpose = purpose1.value;
         const start   = startYm.value;
         const end     = endYm.value;
 
-        const res = await fetch('/api/predict', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({
-                combos: [{ country, purpose }],
-                start_ym: start,
-                end_ym: end
-            })
-        });
-        const { results } = await res.json();
+        try {
+            const res = await fetch('/api/predict', {
+                method: 'POST',
+                headers: {'Content-Type':'application/json'},
+                body: JSON.stringify({
+                    combos: [{ country, purpose }],
+                    start_ym: start,
+                    end_ym: end
+                })
+            });
+            const { results } = await res.json();
 
-        results.forEach(r => {
-            if (r.error) {
+            if (!results || results.length === 0) {
                 const alert = document.createElement('div');
-                alert.className = 'alert alert-danger';
-                alert.textContent = `[오류] ${r.error}`;
+                alert.className = 'alert alert-warning';
+                alert.textContent = '예측 결과가 없습니다.';
                 graphContainer.append(alert);
-                return;
             }
 
-            // 그래프
-            const graphDiv = document.createElement('div');
-            graphDiv.style.height = '400px';
-            graphContainer.append(graphDiv);
-
-            Plotly.newPlot(graphDiv, [
-                {
-                    x: r.hist_yms,
-                    y: r.hist_values,
-                    mode: 'lines+markers',
-                    name: '실제값',
-                    line: { dash: 'dot' },
-                    marker: { size: 5 }
-                },
-                {
-                    x: r.yms,
-                    y: r.values,
-                    mode: 'lines+markers',
-                    name: '예측값',
-                    marker: { size: 6 }
+            results.forEach(r => {
+                if (r.error) {
+                    const alert = document.createElement('div');
+                    alert.className = 'alert alert-danger';
+                    alert.textContent = `[오류] ${r.error}`;
+                    graphContainer.append(alert);
+                    return;
                 }
-            ], {
-                title: `${r.country} / ${r.purpose} 입국자수`,
-                margin: { t: 50, b: 50 }
+
+                // 그래프
+                const graphDiv = document.createElement('div');
+                graphDiv.style.height = '400px';
+                graphContainer.append(graphDiv);
+
+                Plotly.newPlot(graphDiv, [
+                    {
+                        x: r.hist_yms,
+                        y: r.hist_values,
+                        mode: 'lines+markers',
+                        name: '실제값',
+                        line: { dash: 'dot' },
+                        marker: { size: 5 }
+                    },
+                    {
+                        x: r.yms,
+                        y: r.values,
+                        mode: 'lines+markers',
+                        name: '예측값',
+                        marker: { size: 6 }
+                    }
+                ], {
+                    title: `${r.country} / ${r.purpose} 입국자수`,
+                    margin: { t: 50, b: 50 }
+                });
+
+                // 예측 수치 테이블
+                const tableDiv = document.createElement('div');
+                tableDiv.className = 'mt-3';
+                tableDiv.innerHTML = `
+                    <table class="table table-bordered table-sm">
+                        <thead>
+                            <tr><th>연월</th><th>예측 입국자수</th></tr>
+                        </thead>
+                        <tbody>
+                            ${r.yms.map((ym,i) =>
+                                `<tr><td>${ym}</td><td>${r.values[i]}</td></tr>`
+                            ).join('')}
+                        </tbody>
+                    </table>
+                `;
+                graphContainer.append(tableDiv);
+
+                // 성능 지표 표시
+                const metricDiv = document.createElement('div');
+                metricDiv.className = 'mb-4';
+                metricDiv.innerHTML = `
+                    <strong>성능 지표:</strong>
+                    R² = ${r.r2 ?? '-'} |
+                    MAPE = ${r.mape != null ? r.mape + '%' : '-'} |
+                    신뢰도 = ${r.confidence != null ? r.confidence + '%' : '-'}
+                `;
+                graphContainer.append(metricDiv);
             });
-
-            // 예측 수치 테이블
-            const tableDiv = document.createElement('div');
-            tableDiv.className = 'mt-3';
-            tableDiv.innerHTML = `
-                <table class="table table-bordered table-sm">
-                    <thead>
-                        <tr><th>연월</th><th>예측 입국자수</th></tr>
-                    </thead>
-                    <tbody>
-                        ${r.yms.map((ym,i) =>
-                            `<tr><td>${ym}</td><td>${r.values[i]}</td></tr>`
-                        ).join('')}
-                    </tbody>
-                </table>
-            `;
-            graphContainer.append(tableDiv);
-
-            // 성능 지표 표시
-            const metricDiv = document.createElement('div');
-            metricDiv.className = 'mb-4';
-            metricDiv.innerHTML = `
-                <strong>성능 지표:</strong>
-                R² = ${r.r2 ?? '-'} |
-                MAPE = ${r.mape != null ? r.mape + '%' : '-'} |
-                RMSE = ${r.rmse ?? '-'}
-            `;
-            graphContainer.append(metricDiv);
-        });
+        } catch (err) {
+            const alert = document.createElement('div');
+            alert.className = 'alert alert-danger';
+            alert.textContent = `[오류] 예측 실행 중 오류가 발생했습니다.`;
+            graphContainer.append(alert);
+        } finally {
+            predictBtn.disabled = false;
+            predictBtn.textContent = '예측 실행';
+        }
     });
 });
 </script>
