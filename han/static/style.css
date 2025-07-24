@@ -1,4 +1,4 @@
-/* style.css - 외국인 방문객 예측 서비스 (단축화+주석 보존) */
+/* style.css - 외국인 방문객 예측 서비스 (수정된 버전) */
 
 /* 레이아웃 및 폰트 */
 html, body { height: 100%; min-height: 100%; margin: 0; padding: 0; }
@@ -6,6 +6,7 @@ body {
     display: flex; flex-direction: column; min-height: 100vh;
     font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif !important;
     background: #f8fafc;
+    background: linear-gradient(135deg, #f8fafc 60%, #eef3fa 100%);
 }
 
 /* 메인 컨텐츠, 그래프 */
@@ -29,6 +30,21 @@ select#start-year, select#end-year, select#start-month, select#end-month, select
 select.form-select:focus { border-color: #1749a6; box-shadow: 0 0 0 2px #a3c3fa66; }
 #compare-btn { min-width: 70px; margin-left: 18px; background: #2563eb; border-color: #2563eb; color: #fff; font-weight: bold; }
 #compare-btn:hover { background: #1749a6; border-color: #1749a6; }
+/* 코로나 표시 버튼(무늬만, 비활성) */
+#covid-visual-btn {
+    background: #f6f6f6;
+    color: #d72660 !important;
+    font-weight: 700;
+    border: 1.2px solid #d72660;
+    cursor: default;
+    letter-spacing: 0.01em;
+    opacity: 0.85;
+    min-width: 55px;
+    max-width: 70px;
+    padding: 2px 8px;
+    font-size: 0.93rem;
+    height: 32px;
+}
 
 /* 체크박스, 뉴스, 기타 */
 .checkbox-area { margin-top: 6px; margin-bottom: 10px; }
@@ -56,3 +72,268 @@ footer {
     color: #888; background: none; max-width: 540px; margin-left: auto; margin-right: auto; word-break: keep-all;
 }
 footer .footer-icon { font-weight: 600; vertical-align: -0.15em; }
+
+/* ===== About 페이지 전용 스타일 ===== */
+body.about-page {
+    font-family: 'Noto Sans KR', 'Gowun Dodum', sans-serif !important;
+    background: #f8fafc; /* 기본 배경색만 적용 */
+}
+
+/* 배경 이미지와 오버레이를 main-content에만 적용 */
+body.about-page .main-content {
+    background: url('/static/images/별빛도서관.jpg') center center / cover no-repeat;
+    position: relative;
+}
+
+body.about-page .main-content::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0;
+    width: 100%; height: 100%;
+    background: linear-gradient(135deg, rgba(20,22,30,0.48) 0%, rgba(30,30,44,0.60) 100%);
+    z-index: 0;
+}
+
+/* bg-overlay div는 더 이상 필요하지 않으므로 숨김 */
+body.about-page .bg-overlay {
+    display: none;
+}
+
+body.about-page .about-content-bg.about-centered {
+    max-width: 700px;
+    margin: 70px auto 48px auto;
+    padding-left: 48px;
+    padding-right: 48px;
+    border-radius: 28px;
+    background: none;
+    position: relative;
+    z-index: 1;
+}
+
+/* 헤더: predict.html과 동일한 스타일 적용 */
+body.about-page .custom-header {
+    background: #212529 !important; /* Bootstrap bg-dark와 동일 */
+    color: #fff !important;
+    min-height: auto;
+    border: none;
+    position: relative;
+    z-index: 100;
+    /* Bootstrap p-4와 동일한 패딩 */
+    padding: 1.5rem 0 !important; /* 좌우 패딩 제거 */
+    margin-bottom: 0; /* 여백 제거 */
+}
+
+body.about-page .custom-header .container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    /* Bootstrap container와 동일한 설정 */
+    width: 100%;
+    padding-right: calc(1.5rem * 0.5);
+    padding-left: calc(1.5rem * 0.5);
+    margin-right: auto;
+    margin-left: auto;
+    max-width: 1320px; /* Bootstrap container-xl */
+}
+
+/* 반응형 container 너비 */
+@media (min-width: 576px) {
+    body.about-page .custom-header .container {
+        max-width: 540px;
+    }
+}
+
+@media (min-width: 768px) {
+    body.about-page .custom-header .container {
+        max-width: 720px;
+    }
+}
+
+@media (min-width: 992px) {
+    body.about-page .custom-header .container {
+        max-width: 960px;
+    }
+}
+
+@media (min-width: 1200px) {
+    body.about-page .custom-header .container {
+        max-width: 1140px;
+    }
+}
+
+@media (min-width: 1400px) {
+    body.about-page .custom-header .container {
+        max-width: 1320px;
+    }
+}
+
+body.about-page .custom-header a[href="/"] {
+    display: flex;
+    align-items: center;
+    text-decoration: none;
+    color: inherit;
+}
+
+body.about-page .custom-header img.globe-icon {
+    width: 36px;
+    height: 36px;
+    margin-right: 0.5rem; /* Bootstrap me-2와 동일 */
+}
+
+body.about-page .custom-header h3 {
+    margin: 0;
+    font-size: 2rem; /* predict.html과 동일 */
+    color: #fff !important;
+    font-weight: inherit;
+}
+
+body.about-page .custom-header .nav {
+    display: flex;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+body.about-page .custom-header .nav-item {
+    margin: 0;
+}
+
+body.about-page .custom-header .nav-link {
+    color: #fff !important;
+    font-weight: 700 !important; /* Bootstrap fw-bold와 동일 */
+    text-decoration: none;
+    padding: 0.5rem 1rem;
+    display: block;
+}
+
+body.about-page .custom-header .nav-link:hover,
+body.about-page .custom-header .nav-link:focus {
+    color: #f8f9fa !important;
+}
+
+body.about-page .custom-header .nav-link.active {
+    color: #fff !important;
+}
+
+/* ===== About 컨텐츠(문구/강조/여백) ===== */
+body.about-page .about-title {
+    font-size: 2.9rem;
+    color: #ffd700;
+    font-weight: 900;
+    letter-spacing: 0.04em;
+    margin-bottom: 42px;
+}
+
+body.about-page .about-headline {
+    font-size: 1.32em;
+    font-weight: 800;
+    color: #ffd700;
+    letter-spacing: 0.02em;
+    margin-bottom: 24px;
+    display: inline-block;
+}
+
+body.about-page .about-intro-body {
+    margin-bottom: 20px;
+    font-size: 1.13em;
+    color: #fffde7;
+    line-height: 2;
+}
+
+body.about-page .about-intro-strong {
+    font-weight: 700;
+    color: #ffeaa0;
+    margin-bottom: 18px;
+    font-size: 1.08em;
+}
+
+body.about-page .about-intro-desc {
+    font-size: 1.08em;
+    margin-bottom: 16px;
+}
+
+body.about-page .about-intro-bottom {
+    color: #d6e3ff;
+    font-size: 1.04em;
+    font-weight: 500;
+    margin-bottom: 34px;
+}
+
+body.about-page .about-section-title {
+    font-size: 1.35rem;
+    font-family: 'Gowun Dodum', 'Noto Sans KR', sans-serif;
+    color: #ffeeb3;
+    font-weight: 700;
+    margin-top: 54px;
+    margin-bottom: 20px;
+    letter-spacing: 0.02em;
+}
+
+body.about-page .about-section-body {
+    font-size: 1.13em;
+    margin-bottom: 18px;
+    color: #fff;
+    line-height: 2;
+}
+
+body.about-page .about-tech-list {
+    margin-bottom: 16px;
+    font-size: 1.08em;
+    line-height: 2.2;
+}
+body.about-page .about-tech-list > div {
+    margin-bottom: 0.5em;
+}
+
+body.about-page .about-links {
+    margin-top: 18px;
+}
+
+body.about-page .about-link {
+    color: #fffbe7;
+    font-weight: 700;
+    text-decoration: underline;
+    margin-right: 6px;
+}
+body.about-page .about-link:hover {
+    color: #ffe680;
+}
+body.about-page .about-link-desc {
+    color: #b2c6ff;
+    font-size: 0.99em;
+}
+
+/* 키워드/포인트 */
+body.about-page .about-ai     { color: #b6e0ff; font-weight: 600; }
+body.about-page .about-public { color: #ffeaa0; font-weight: 600; }
+body.about-page .about-point  { color: #ffd700; font-weight: 700; }
+
+/* h1~h2와 단락 등 각 요소 사이 여백 */
+body.about-page .about-content-bg h1,
+body.about-page .about-content-bg .about-title {
+    margin-top: 0;
+    margin-bottom: 42px;
+}
+body.about-page .about-content-bg h2,
+body.about-page .about-section-title {
+    margin-top: 54px;
+    margin-bottom: 20px;
+}
+
+/* 텍스트 라인 높이/가독성 */
+body.about-page .about-content-bg,
+body.about-page .about-section-body,
+body.about-page .about-intro-body {
+    line-height: 2.0;
+}
+
+body.about-page .about-content-bg {
+    box-shadow: none !important;
+    color: #fff;
+    text-shadow: 0 2px 16px rgba(32,34,52,0.18);
+}
+
+body.about-page footer {
+    position: relative;
+    z-index: 10;
+}

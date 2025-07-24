@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>About - 외국인 입국자 예측 서비스</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Gowun+Dodum&family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body class="about-page">
+    <div class="bg-overlay"></div>
+    <header class="custom-header p-4 bg-dark text-white mb-3">
+        <div class="container d-flex align-items-center justify-content-between">
+            <a href="/" class="d-flex align-items-center" style="text-decoration:none; color:inherit;">
+                <img src="/static/images/globe.png" alt="지구본" class="me-2 globe-icon">
+                <h3 class="m-0">외국인 방문자수 빅데이터 예측 프로그램</h3>
+            </a>
+            <nav>
+                <ul class="nav">
+                    <li class="nav-item">
+                        <a class="nav-link text-white fw-bold active" href="/about" id="menu-about">About</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white fw-bold" href="/predict" id="menu-predict">예측 프로그램</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link text-white fw-bold" href="/predict#news-section" id="menu-news">뉴스 스크랩</a>
+                    </li>
+                </ul>
+            </nav>
+        </div>
+    </header>
+    <div class="main-content">
+        <div class="about-content-bg about-centered">
+            <!-- About 헤드라인 -->
+            <h1 class="about-title">About</h1>
+            
+            <!-- 인트로 -->
+            <div class="about-intro">
+                <span class="about-headline">여행 데이터의 미래, 한눈에</span>
+                <div class="about-intro-body">
+                    세계 관광이 다시 움직이고,<br>
+                    한국을 찾는 외국인 방문자 수는 꾸준히 증가하고 있습니다.
+                </div>
+                <div class="about-intro-strong">
+                    이제, 예측은 감(感)이 아니라 데이터로 완성됩니다.
+                </div>
+                <div class="about-intro-desc">
+                    <span class="about-ai">AI 기반 분석</span>과 <span class="about-public">공공데이터</span>를 결합해<br>
+                    국가·목적별 방문 패턴을<br>
+                    <span class="about-point">더 정밀하고 신뢰도 높게 예측</span>합니다.
+                </div>
+                <div class="about-intro-bottom">
+                    정책, 산업, 축제까지<br>
+                    모두가 활용할 수 있는 객관적 데이터 인사이트.
+                </div>
+            </div>
+            
+            <!-- 우리가 하는 일 -->
+            <h2 class="about-section-title">우리가 하는 일</h2>
+            <p class="about-section-body">
+                <span class="about-public">최신 AI와 공공 데이터</span>를 융합하여<br>
+                변화하는 관광 트렌드를 국가별·목적별로 분석합니다.<br>
+                누구나 신뢰할 수 있는 예측 결과를 바탕으로,<br>
+                여행업계, 공공기관, 축제·행사 등 다양한 분야에<br>
+                <span class="about-ai">실질적인 데이터 인사이트</span>를 제공합니다.
+            </p>
+            
+            <!-- 우리가 사용하는 기술 -->
+            <h2 class="about-section-title">우리가 사용하는 기술</h2>
+            <div class="about-tech-list">
+                <div><span class="about-public">LSTM</span> ― 장기 패턴과 계절성을 학습하는 시계열 딥러닝</div>
+                <div><span class="about-public">GRU</span> ― 빠르고 간결하며 적은 데이터에도 강력한 예측</div>
+                <div><span class="about-public">Transformer</span> ― 복잡한 변화도 세밀하게 읽어내는 최신 AI</div>
+                <div><span class="about-public">Ensemble</span> ― 여러 모델을 결합해 신뢰도와 정확도를 극대화</div>
+            </div>
+            
+            <!-- 우리의 비전 -->
+            <h2 class="about-section-title">우리의 비전</h2>
+            <p class="about-section-body">
+                <span class="about-point">정확하고 신뢰도 높은 예측 데이터</span>로<br>
+                모두가 미래를 준비할 수 있도록.<br>
+                <span class="about-ai">관광 산업, 정책, 축제 현장 등</span><br>
+                실제 현장에서 활용되는 인사이트를 제공합니다.
+            </p>
+            
+            <!-- 참고사이트 -->
+            <h2 class="about-section-title">참고사이트</h2>
+            <div class="about-links">
+                <a href="https://datalab.visitkorea.or.kr/" target="_blank" class="about-link">한국관광데이터랩</a>
+                <span class="about-link-desc">― 국내 관광 데이터 분석과 시각화 플랫폼</span>
+                <br>
+                <a href="https://www.tour.go.kr/" target="_blank" class="about-link">관광지식정보시스템</a>
+                <span class="about-link-desc">― 정책·통계·연구자료 등 다양한 관광지식 제공</span>
+                <br>
+                <a href="https://kosis.kr/" target="_blank" class="about-link">KOSIS 국가통계포털</a>
+                <span class="about-link-desc">― 국가 공공데이터와 통계 정보를 통합 제공</span>
+            </div>
+        </div>
+    </div>
+    <hr>
+    <footer class="text-center small">
+        <span class="footer-icon">🌱</span>
+        <span style="font-weight:600;">2025 CodingSSAK Co.</span>
+        <br>
+        <span style="font-size:0.94em">
+            본 서비스는 연구 및 비상업적 목적에 한해 사용 가능합니다.<br>
+            <b>한국관광데이터랩</b>, <b>관광지식정보시스템</b>, <b>KOSIS 국가통계포털</b> 데이터 기반
+        </span>
+    </footer>
+</body>
+</html>
