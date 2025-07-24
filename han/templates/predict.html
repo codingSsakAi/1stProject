@@ -1,4 +1,4 @@
-<!-- predict.html - 외국인 방문객 예측/뉴스/그래프 UI (최대 단축) -->
+<!-- predict.html - 외국인 방문객 예측/뉴스/그래프 UI (수정본) -->
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -19,8 +19,15 @@
         </a>
         <nav>
             <ul class="nav">
-                <li class="nav-item"><a class="nav-link text-white fw-bold" href="#" id="menu-predict">예측 프로그램</a></li>
-                <li class="nav-item"><a class="nav-link text-white fw-bold" href="#" id="menu-news">뉴스 스크랩</a></li>
+                <li class="nav-item">
+                <a class="nav-link text-white fw-bold" href="/about" id="menu-about">About</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link text-white fw-bold" href="#" id="menu-predict">예측 프로그램</a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link text-white fw-bold" href="#" id="menu-news">뉴스 스크랩</a>
+            </li>
             </ul>
         </nav>
     </div>
@@ -53,11 +60,9 @@
             </div>
             </div>
             <div class="text-center" style="margin-right:20px;">
-            <label class="form-label mb-0" for="covid-visual" style="min-width:90px;">코로나 표시</label>
-            <select class="form-select" id="covid-visual" style="width:120px; min-width:100px;">
-                <option value="show">표시</option>
-                <option value="hide">미표시</option>
-            </select>
+            <label class="form-label mb-0" for="covid-visual-btn" style="min-width:90px;">코로나 표시</label>
+            <!-- 드롭다운 → 버튼으로 교체, 클릭/변경 불가 -->
+            <button class="btn btn-outline-secondary" id="covid-visual-btn" disabled style="min-width:100px; background:#f6f6f6; color:#666; font-weight:600; letter-spacing:0.02em;">표시</button>
             </div>
             <div class="ms-auto">
             <button class="btn btn-primary" id="compare-btn" style="height:48px; min-width:60px;">빅데이터 검색</button>
