@@ -37,18 +37,8 @@ def predict():
                 else:           ms=range(1,13)
                 months+=list(ms)
             res = run_forecast(c,p,sy,months)
-            if isinstance(res,dict) and 'error' in res:
-                results.append({'country':c,'purpose':p,'error':res['error']})
-                continue
-            preds   = res['predictions']
-            results.append({
-                'country':c,'purpose':p,
-                'yms':[r['ym'] for r in preds],
-                'values':[r['predicted'] for r in preds],
-                'hist_yms':df[(df['국적']==c)&(df['목적']==p)].sort_values('년월')['년월'].dt.strftime('%Y-%m').tolist(),
-                'hist_values':df[(df['국적']==c)&(df['목적']==p)].sort_values('년월')['입국자수'].tolist(),
-                'r2':res['r2'],'mape':res['mape'],'rmse':res['rmse']
-            })
+            for item in res:
+                results.append(item)
     return jsonify({'results':results})
 
 if __name__=='__main__':

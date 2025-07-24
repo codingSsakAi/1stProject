@@ -1,22 +1,77 @@
 body {
-    background: #f8fafc;
-    font-family: 'Noto Sans KR', 'Malgun Gothic', sans-serif !important;
+    background: #f9fafc;
 }
-.form-label {
-    font-weight: bold;
-    color: #1565c0;
+
+.container {
+    max-width: 1100px;
 }
-select#country1, select#purpose1 { border: 2px solid #90caf9; background: #e3f2fd; }
-select#country2, select#purpose2 { border: 2px solid #ffe082; background: #fffde7; }
-#compare-graph {
-    border: 1px solid #bbb;
-    border-radius: 8px;
+
+h2 {
+    font-weight: 700;
+    color: #142136;
+    margin-bottom: 28px;
+}
+
+form#predict-form {
     background: #fff;
-    margin-top: 10px;
-    min-height: 400px;
-    height: 500px;  /* 추가: Plotly와 일치 */
-    max-width: 100%;
+    border-radius: 1.2rem;
+    box-shadow: 0 2px 14px 0 #cdd4ea4a;
+    padding: 24px 16px 10px 16px;
+    margin-bottom: 40px;
 }
-#compare-title { color: #212121; }
-.btn-primary { background: #1565c0; border-color: #1565c0; }
-footer { color: #888; }
+
+label.form-label {
+    font-weight: 500;
+    margin-bottom: 6px;
+}
+
+select.form-select, input.form-control {
+    min-width: 100px;
+}
+
+button.btn-primary {
+    border-radius: 0.5rem;
+    padding: 8px 28px;
+    font-size: 1.12rem;
+}
+
+#graph-container > div {
+    margin-bottom: 34px;
+    border-radius: 1.2rem;
+    background: #fff;
+    box-shadow: 0 1px 8px #cdd4ea38;
+    padding: 24px 22px 12px 22px;
+}
+
+#graph-container table {
+    margin-top: 12px;
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+#graph-container th, #graph-container td {
+    text-align: center;
+}
+
+#graph-container .alert {
+    margin-top: 14px;
+    font-size: 1.03rem;
+}
+
+#graph-container .mb-4 {
+    margin-bottom: 1.8rem !important;
+    margin-top: 0.6rem;
+    font-size: 1.06rem;
+    color: #3450b0;
+}
+
+@media (max-width: 700px) {
+    .container {
+        max-width: 99vw;
+        padding: 0 4vw;
+    }
+    h2 { font-size: 1.3rem; }
+    #graph-container > div {
+        padding: 8px 4px 8px 4px;
+    }
+}
