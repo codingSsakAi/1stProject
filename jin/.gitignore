@@ -2,6 +2,7 @@ __pycache__
 .env
 .gemini/
 .vscode/
+./models/
 config/
 backup
 *.DS_Store
@@ -11,3 +12,5 @@ backup
 *.json
 *.png
 *.h5
+*.pkl
+*.csv
