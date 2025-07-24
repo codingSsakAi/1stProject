@@ -15,6 +15,7 @@ import warnings
 from sklearn.preprocessing import MinMaxScaler
 import joblib
 from scipy.stats import pearsonr, spearmanr  # 상관계수 계산용
+import logging
 from prophet import Prophet  # Prophet 추가
 import math
 
@@ -24,21 +25,7 @@ if platform.system() == "Darwin":
 plt.rcParams["axes.unicode_minus"] = False
 
 # 사용할 feature 컬럼 리스트 (csv 헤더 기준)
-FEATURE_COLS = [
-    "입국자수",
-    "입국자수_1개월전",
-    "입국자수_3개월전",
-    "입국자수_12개월전",
-    "입국자수_3개월평균",
-    "입국자수_12개월평균",
-    "전년동월대비증감률",
-    "분기",
-    "계절",
-    "코로나기간",
-    "시계열순서",
-    "month_sin",
-    "month_cos",
-]
+FEATURE_COLS = ["입국자수"]
 
 
 def save_model_and_scaler(
@@ -56,15 +43,12 @@ def save_model_and_scaler(
     if model_type == "lstm":
         model_path = os.path.join(save_dir, f"{safe_국적}_{safe_목적}_lstm.keras")
         model.save(model_path)  # save_format 인자 제거
-        print(f"✅ LSTM 모델 저장: {model_path}")
     elif model_type == "xgboost":
         model_path = os.path.join(save_dir, f"{safe_국적}_{safe_목적}_xgb.json")
         model.save_model(model_path)
-        print(f"✅ XGBoost 모델 저장: {model_path}")
     # 스케일러 저장
     scaler_path = os.path.join(save_dir, f"{safe_국적}_{safe_목적}_scaler.pkl")
     joblib.dump(scaler, scaler_path)
-    print(f"✅ 스케일러 저장: {scaler_path}")
 
 
 # 시계열 데이터를 입력받아 (window 개월씩 잘라서) LSTM에 넣을 학습 데이터를 만듭니다
@@ -111,57 +95,6 @@ def get_reliability_level(mape):
         return "낮음 (신뢰 어려움)"
 
 
-# 미래 예측 시 feature vector 동적 갱신 함수
-# (입국자수, lag, rolling mean, 증감률 등 예측값 기반으로 갱신)
-def update_future_features(prev_features_list, pred_scaled, n_features):
-    # prev_features_list: 예측 구간까지의 feature history (정규화된 값)
-    # pred_scaled: 이번 예측값(정규화)
-    # n_features: feature 개수
-    # FEATURE_COLS 순서에 맞게 갱신
-    def get_first(x):
-        # 리스트/배열이 여러 번 중첩된 경우에도 스칼라가 나올 때까지 반복
-        while isinstance(x, (list, np.ndarray)):
-            if len(x) == 0:
-                return 0.0
-            x = x[0]
-        return float(x)
-
-    pred_history = [get_first(x) for x in prev_features_list] + [float(pred_scaled)]
-    # prev_features_list[-1]이 1차원 벡터가 아니거나 길이가 다르면 0으로 초기화
-    if (
-        isinstance(prev_features_list[-1], (list, np.ndarray))
-        and len(prev_features_list[-1]) == n_features
-    ):
-        next_features = list(prev_features_list[-1])
-    else:
-        next_features = [0.0] * n_features
-    # 1개월전
-    next_features[1] = pred_history[-2]
-    # 3개월전
-    next_features[2] = pred_history[-4] if len(pred_history) >= 4 else 0
-    # 12개월전
-    next_features[3] = pred_history[-13] if len(pred_history) >= 13 else 0
-    # 3개월평균
-    next_features[4] = (
-        np.mean(pred_history[-3:]) if len(pred_history) >= 3 else np.mean(pred_history)
-    )
-    # 12개월평균
-    next_features[5] = (
-        np.mean(pred_history[-12:])
-        if len(pred_history) >= 12
-        else np.mean(pred_history)
-    )
-    # 전년동월대비증감률
-    if len(pred_history) >= 13 and pred_history[-13] != 0:
-        next_features[6] = (
-            (float(pred_scaled) - pred_history[-13]) / pred_history[-13] * 100
-        )
-    else:
-        next_features[6] = 0
-    # 항상 1차원 float 벡터로 반환
-    return [float(x) for x in next_features]
-
-
 # 예측 구간 월별로 최근 3년 같은 월의 실제 입국자수 평균을 구하는 함수
 import pandas as pd
 
@@ -187,66 +120,7 @@ def get_seasonal_average(df, 국적, 목적, target_dates, n_years=3):
 
 # --- Flat/0/음수/비정상 예측 자동 보정 함수 (고도화) ---
 def robust_postprocess_predictions(pred_values, hist_data, label):
-    """
-    flat, 0, 음수, NaN, 폭주 등 비정상 예측값을 자동 보정하는 함수
-    - flat: 계절성 평균, rolling mean, noise blending
-    - 음수/0: 최소값 보정
-    - 폭주: clip
-    - NaN/inf: 대체
-    """
-    pred_values = np.nan_to_num(pred_values, nan=0, posinf=0, neginf=0)
-    # 음수/0값 보정 (최소 1 이상)
-    pred_values = np.where(pred_values < 1, 1, pred_values)
-    # flat 경향 보정 (표준편차, 로그 변동폭, max/min 비율, diff 평균)
-    std = np.std(pred_values)
-    std_log = np.std(np.log1p(pred_values))
-    max_min_ratio = np.max(pred_values) / (np.min(pred_values) + 1e-6)
-    diff_mean = np.mean(np.abs(np.diff(pred_values)))
-    is_flat = (std < 5) or (std_log < 0.015) or (max_min_ratio < 1.1) or (diff_mean < 3)
-    if is_flat:
-        print(f"[고도화] {label} - Flat/비정상 예측값 보정 중...")
-        # blending 비율 상향
-        months = [((i % 12) + 1) for i in range(len(pred_values))]
-        seasonal_avg = []
-        for i, m in enumerate(months):
-            vals = hist_data[hist_data["날짜"].dt.month == m]["입국자수"][-36:]
-            if len(vals) > 0:
-                seasonal_avg.append(np.mean(vals))
-        else:
-            seasonal_avg.append(np.mean(hist_data["입국자수"]))
-        seasonal_avg = np.array(seasonal_avg)
-        # 길이 맞추기
-        n = min(len(pred_values), len(seasonal_avg))
-        pred_values = pred_values[:n]
-        seasonal_avg = seasonal_avg[:n]
-        improved_pred = 0.4 * pred_values + 0.6 * seasonal_avg  # blending 비율 상향
-        # 변화 noise 추가
-        hist_diff = np.diff(hist_data["입국자수"][-24:])
-        if len(hist_diff) > 0:
-            noise = np.random.normal(0, np.std(hist_diff), size=len(pred_values))
-            improved_pred += noise * 0.1
-        # flat이 심하면 rolling mean + noise
-        if std < 2 or diff_mean < 1:
-            rolling = (
-                pd.Series(hist_data["입국자수"])
-                .rolling(window=6, min_periods=1)
-                .mean()
-                .iloc[-1]
-            )
-            improved_pred = np.full_like(pred_values, rolling) + np.random.normal(
-                0, 2, size=len(pred_values)
-            )
-        hist_mean = np.mean(hist_data["입국자수"])
-        improved_pred = np.clip(improved_pred, hist_mean * 0.5, hist_mean * 2.0)
-        return improved_pred
-    # 폭주/NaN/inf 보정 (상한값을 더 엄격하게 clip)
-    hist_mean = np.mean(hist_data["입국자수"])
-    max_clip = max(hist_mean * 2.0, np.percentile(hist_data["입국자수"], 99))
-    min_clip = max(hist_mean * 0.5, 1)
-    pred_values = np.clip(pred_values, min_clip, max_clip)
-    pred_values = np.nan_to_num(pred_values, nan=hist_mean)
-    # 비정상적으로 큰 값(1e9 이상, int64 max 등)도 강제 보정
-    pred_values = np.where(pred_values > 1e9, max_clip, pred_values)
+    # 입력값을 그대로 반환 (보정 로직 무력화)
     return pred_values
 
 
@@ -254,105 +128,8 @@ def robust_postprocess_predictions(pred_values, hist_data, label):
 def enforce_trend_on_predictions(
     pred_values, hist_data, future_dates, label, purpose=None
 ):
-    """
-    flat/급락/폭주/비정상 예측 감지 시, 최근 2~3년 성장률/계절성/rolling mean을 강하게 blending하여
-    예측 구간이 과거 트렌드(우상향/계절성 등)를 자연스럽게 이어받도록 보정
-    목적별로 blending 비율/보정 방식 차등 적용
-    관광/유학연수 등은 blending, 성장률 보정 비율을 높이고, gap-예측 연결부 blending을 12개월까지 확대
-    월별 성장률 보정 추가
-    """
-    pred_values = np.nan_to_num(pred_values, nan=0, posinf=0, neginf=0)
-    pred_values = np.where(pred_values < 1, 1, pred_values)
-    # flat/비정상 감지 기준(더 엄격하게)
-    std = np.std(pred_values)
-    std_log = np.std(np.log1p(np.clip(pred_values, a_min=0, a_max=None)))
-    max_min_ratio = np.max(pred_values) / (np.min(pred_values) + 1e-6)
-    diff_mean = np.mean(np.abs(np.diff(pred_values)))
-    is_flat = (
-        (std < 10) or (std_log < 0.02) or (max_min_ratio < 1.15) or (diff_mean < 5)
-    )
-    is_abnormal = (
-        (np.any(pred_values < 1))
-        or (np.any(np.isnan(pred_values)))
-        or (np.any(np.isinf(pred_values)))
-    )
-    # 최근 2~3년 성장률/계절성/rolling mean 계산 (2023~2025 우선 반영)
-    recent = hist_data[hist_data["날짜"] >= pd.to_datetime("2023-01-01")]
-    if len(recent) < 12:
-        recent = hist_data[-36:] if len(hist_data) >= 36 else hist_data
-    months = [d.month for d in future_dates]
-    seasonal_avg = []
-    for m in months:
-        vals = recent[recent["날짜"].dt.month == m]["입국자수"]
-        if len(vals) > 0:
-            seasonal_avg.append(np.mean(vals))
-        else:
-            seasonal_avg.append(np.mean(recent["입국자수"]))
-    seasonal_avg = np.array(seasonal_avg)
-    # 최근 성장률(연평균)
-    if len(recent) > 12:
-        growth = (recent["입국자수"].iloc[-1] - recent["입국자수"].iloc[0]) / max(
-            recent["입국자수"].iloc[0], 1
-        )
-    else:
-        growth = 0.0
-    rolling = recent["입국자수"].rolling(window=6, min_periods=1).mean().iloc[-1]
-    # blending/성장률 보정 비율 상향
-    if purpose in ["관광", "유학연수"]:
-        blend_ratio = 1.0
-        seasonal_growth = seasonal_avg * (1 + growth)
-        improved_pred = 0.7 * seasonal_growth + 0.3 * rolling
-        # 월별 성장률 보정 추가
-        for i, d in enumerate(future_dates):
-            month = d.month
-            recent_months = recent[recent["날짜"].dt.month == month]["입국자수"]
-            if len(recent_months) > 1:
-                month_growth = (recent_months.iloc[-1] - recent_months.iloc[0]) / max(
-                    recent_months.iloc[0], 1
-                )
-                improved_pred[i] *= 1 + month_growth
-        print(
-            f"[자동리포트] '{label}' 관광/유학연수 목적 예측 → blending 1.0, 성장률/월별 성장률 보정, 최근 데이터(2023~) 우선 반영"
-        )
-    elif purpose in ["공용", "상용"]:
-        nonzero = recent[recent["입국자수"] > 0]["입국자수"]
-        if len(nonzero) > 0:
-            seasonal_avg = np.array([np.mean(nonzero)] * len(pred_values))
-            growth = (
-                (nonzero.iloc[-1] - nonzero.iloc[0]) / max(nonzero.iloc[0], 1)
-                if len(nonzero) > 1
-                else 0.0
-            )
-        blend_ratio = 0.9 if is_flat or is_abnormal else 0.5
-        seasonal_growth = seasonal_avg * (1 + growth)
-        improved_pred = (1 - blend_ratio) * pred_values + blend_ratio * (
-            0.7 * seasonal_growth + 0.3 * rolling
-        )
-    else:
-        blend_ratio = 0.8 if is_flat or is_abnormal else 0.4
-        seasonal_growth = seasonal_avg * (1 + growth)
-        improved_pred = (1 - blend_ratio) * pred_values + blend_ratio * (
-            0.7 * seasonal_growth + 0.3 * rolling
-        )
-    # gap-예측 연결부 blending 12개월 확대
-    if len(improved_pred) >= 12:
-        last_hist = hist_data["입국자수"].iloc[-1]
-        for i in range(12):
-            improved_pred[i] = (
-                0.3 * improved_pred[i] + 0.4 * last_hist + 0.3 * seasonal_growth[i]
-            )
-    # 음수/0/NaN 보정
-    improved_pred = np.nan_to_num(improved_pred, nan=1, posinf=1, neginf=1)
-    improved_pred = np.where(improved_pred < 1, 1, improved_pred)
-    # 과거 평균 대비 clip
-    hist_mean = np.mean(hist_data["입국자수"])
-    improved_pred = np.clip(improved_pred, hist_mean * 0.5, hist_mean * 2.0)
-    # flat/비정상 예측 자동 리포트
-    if is_flat or is_abnormal:
-        print(
-            f"[자동리포트] '{label}' flat/비정상 예측 감지 → blending 비율 {blend_ratio}로 강제 보정"
-        )
-    return improved_pred
+    # 입력값을 그대로 반환 (보정 로직 무력화)
+    return pred_values
 
 
 # --- 계절성 보정: 예측값이 비정상적으로 크거나 flat하면 최근 3년 같은 월 평균과 가중 평균 ---
@@ -371,9 +148,6 @@ def seasonal_adjustment(pred_values, hist_data, future_dates, n_years=3):
         | (pred_values > 10 * np.nanmax(seasonal_avg[~np.isnan(seasonal_avg)]))
     )
     if np.std(pred_values) < 1e-3 or np.any(abnormal):
-        print(
-            f"[계절성 보정] {hist_data['목적'].iloc[0]} — 모델 예측값이 비정상적(flat/폭주/NaN) → 계절성 평균과 가중 평균으로 보정"
-        )
         pred_values = 0.5 * pred_values + 0.5 * np.nan_to_num(
             seasonal_avg, nan=np.nanmean(seasonal_avg)
         )
@@ -425,25 +199,10 @@ def is_flat(pred_values):
 # --- feature engineering 함수 실제 파이프라인에 반영 ---
 def add_features(df):
     """
-    데이터프레임에 lag, rolling mean, 성장률, 계절성, 월별 sin/cos 변환 등 feature를 추가
+    데이터프레임에 추가 파생 feature 없이 '입국자수'만 남김
     """
     df = df.copy()
-    df["입국자수_1개월전"] = df["입국자수"].shift(1)
-    df["입국자수_3개월전"] = df["입국자수"].shift(3)
-    df["입국자수_12개월전"] = df["입국자수"].shift(12)
-    df["입국자수_3개월평균"] = df["입국자수"].rolling(window=3, min_periods=1).mean()
-    df["입국자수_12개월평균"] = df["입국자수"].rolling(window=12, min_periods=1).mean()
-    # 전년동월대비증감률
-    df["전년동월대비증감률"] = (
-        (df["입국자수"] - df["입국자수_12개월전"])
-        / (df["입국자수_12개월전"] + 1e-6)
-        * 100
-    )
-    df = df.fillna(0)
-    # 월(Month) sin/cos 변환 (주기성 인코딩)
-    df["month_sin"] = np.sin(2 * np.pi * df["월"] / 12)
-    df["month_cos"] = np.cos(2 * np.pi * df["월"] / 12)
-    # 한글 주석: 12월과 1월이 주기적으로 연결됨을 모델이 인식할 수 있도록 함
+    # 모든 파생 feature 추가 코드를 제거함
     return df
 
 
@@ -469,7 +228,7 @@ def compare_actual_vs_predicted(actual_df, pred_df, label):
         suffixes=("_실제", "_예측"),
     )
     if len(merged) == 0:
-        print(f"[리포트] '{label}' 실제값-예측값 비교 데이터 없음")
+        # suppress or conditionally print as per len(merged)
         return
     y_true = merged["입국자수"]
     y_pred = merged["예측입국자수"]
@@ -500,27 +259,8 @@ def compare_actual_vs_predicted(actual_df, pred_df, label):
     is_crash = np.any(safe_y_pred < 0.5 * np.mean(y_true))
     is_explode = np.any(safe_y_pred > 2.0 * np.mean(y_true))
     # 리포트 출력
-    print(
-        f"[실제값-예측값 비교] '{label}' MAPE={mape:.2f}% | MAE={mae:.2f} | RMSE={rmse:.2f} | "
-        f"Pearson={pearson_corr:.3f} | Spearman={spearman_corr:.3f} | flat={is_flat} | 급락={is_crash} | 폭주={is_explode}"
-    )
-    # 한글 요약
-    if pearson_corr > 0.9 and spearman_corr > 0.9:
-        print(f"[패턴유사] '{label}' 예측값이 실제값과 매우 유사한 패턴입니다.")
-    elif pearson_corr > 0.7 or spearman_corr > 0.7:
-        print(f"[패턴유사] '{label}' 예측값이 실제값과 대체로 유사한 패턴입니다.")
-    else:
-        print(f"[경고] '{label}' 예측값이 실제값과 패턴이 다를 수 있습니다.")
-    if is_flat:
-        print(f"[경고] '{label}' 예측값이 flat(변동 거의 없음) 경향입니다.")
-    if is_crash:
-        print(f"[경고] '{label}' 예측값에 급락 구간이 있습니다.")
-    if is_explode:
-        print(f"[경고] '{label}' 예측값에 폭주(이상치) 구간이 있습니다.")
-    # 월별 실제값-예측값 차이 요약
+    # 월별 실제값-예측값 차이 및 백테스트 신뢰도 저장
     merged["오차"] = y_true - y_pred
-    print(merged[["날짜", "입국자수", "예측입국자수", "오차"]].tail(12))
-    # 백테스트 신뢰도 CSV 저장
     nation = merged["국적"].iloc[0] if "국적" in merged.columns else ""
     purpose = merged["목적"].iloc[0] if "목적" in merged.columns else label
     save_backtest_reliability(nation, purpose, mape, pearson_corr, spearman_corr)
@@ -572,7 +312,6 @@ def forecast_one(
     df[feature_cols] = df[feature_cols].clip(lower=0)
     # 데이터가 충분하지 않으면 None 반환
     if len(df) < window + 2:
-        print(f"[SKIP] '{label}' 데이터 부족: {len(df)}개월")
         return None
     # 정규화
     scaler = MinMaxScaler()
@@ -650,13 +389,9 @@ def forecast_one(
         else:
             pred = model.predict(X_input.reshape(1, -1))[0]
         preds_scaled.append(pred)
-        next_feat = update_future_features(future_features, pred, len(feature_cols))
-        if not (
-            isinstance(next_feat, (list, np.ndarray))
-            and len(next_feat) == len(feature_cols)
-        ):
-            next_feat = [0.0] * len(feature_cols)
-        future_features.append([float(x) for x in next_feat])
+        # 단일 feature ("입국자수")만 사용하는 구조이므로 pred만 사용
+        next_feat = [pred]
+        future_features.append(next_feat)
     preds_scaled = np.array(preds_scaled)
     dummy = np.zeros((len(preds_scaled), len(feature_cols)))
     dummy[:, 0] = preds_scaled
@@ -673,9 +408,6 @@ def forecast_one(
         future_dates = pd.date_range(start=start_date, periods=n_months, freq="MS")
     # 예측값이 모두 0, NaN, 길이 0이어도 무조건 반환 (None 반환 X)
     if preds is None or len(preds) == 0 or np.all(np.isnan(preds)):
-        print(
-            f"[WARNING] '{label}' 예측값이 비정상(flat/NaN/0 등) → 결과는 저장하되, 값 확인 필요"
-        )
         preds = np.full(n_months, 1)  # 최소값 1로 대체
     # 평가 지표 (백테스트)
     backtest_start = start_date - pd.DateOffset(months=n_months)
@@ -711,8 +443,6 @@ def select_best_model_and_predict(
     results = {}
     for model_type in model_types:
         try:
-            if verbose:
-                print(f"[INFO] {label} - {model_type} 모델 예측 시작...")
             future_dates, pred_values, label, hist_df, metrics, _ = forecast_one(
                 df, label, 시작월, 종료월, window, epochs, model_type=model_type
             )
@@ -725,10 +455,9 @@ def select_best_model_and_predict(
                     "rmse": rmse,
                 }
         except Exception as e:
-            print(f"[ERROR] {label} - {model_type} 모델 예측 실패: {e}")
+            pass
 
     if not results:
-        print(f"[ERROR] {label} - 모든 모델 예측 실패")
         return None, None, label, None, None
 
     # blending
@@ -743,10 +472,7 @@ def select_best_model_and_predict(
     best_pred = preds[best_model_type]
     best_mape = mapes[best_model_type]
 
-    if verbose:
-        print(
-            f"[INFO] {label} - 최적모델: {best_model_type}, MAPE: {best_mape:.2f}, blending 사용여부: {best_mape > 20}"
-        )
+    # (INFO 출력 제거)
 
     # blending과 best 중 신뢰도 기준으로 선택
     final_pred = blended_pred if best_mape > 20 else best_pred
@@ -903,18 +629,13 @@ def forecast_visitors(csv_path, 국적, 목적, 시작월, 종료월, window=12,
             for m in 목적순서
         ]
 
+    # suppress cmdstanpy INFO logs before Prophet prediction
+    logging.getLogger("cmdstanpy").setLevel(logging.WARNING)
     # 각 목적별로 예측 수행
     for i, (m, d) in enumerate(targets):
-        print(
-            f"[DEBUG] 예측 대상: 국적='{국적.strip()}', 목적='{m.strip()}', 데이터 개수={len(d)}"
-        )
-        print(
-            f"[DEBUG] unique 국적: {d['국적'].unique()}, unique 목적: {d['목적'].unique()}"
-        )
         # 기존 LSTM/XGBoost 예측
         result = forecast_one(d, m, 시작월, 종료월, window, epochs)
         if result is None:
-            print(f"[SKIP] '{m}' 예측 완전 실패 → 건너뜀")
             continue
         future_dates, pred_values, label, hist_df, metrics, _ = result
         # Prophet 예측
@@ -1047,10 +768,12 @@ def forecast_visitors(csv_path, 국적, 목적, 시작월, 종료월, window=12,
                 pred_plot["날짜"],
                 pred_plot["예측입국자수"],
                 color="tab:red",
-                linestyle="--",
+                linestyle="-",
                 marker="o",
-                label="예측값(LSTM/XGB)",
+                markersize=5,
                 linewidth=2,
+                label="예측값(LSTM/XGB)",
+                zorder=3,
             )
             ax.set_title(f"[{국적}] {m}", fontsize=14)
             ax.legend(loc="upper right", fontsize=11)
@@ -1068,8 +791,10 @@ def forecast_visitors(csv_path, 국적, 목적, 시작월, 종료월, window=12,
                 color="tab:green",
                 linestyle="-",
                 marker="o",
-                label="예측값(Prophet)",
+                markersize=5,
                 linewidth=2,
+                label="예측값(Prophet)",
+                zorder=3,
             )
             ax.set_title(f"[{국적}] {m}", fontsize=14)
             ax.legend(loc="upper right", fontsize=11)
@@ -1082,7 +807,7 @@ def forecast_visitors(csv_path, 국적, 목적, 시작월, 종료월, window=12,
         fig.savefig(fname)
         plt.show()
 
-    # 예측 결과와 실제값 비교 및 리포트 출력
+    # 예측 결과와 실제값 비교 (리포트 출력 제거)
     if all_forecast_rows:
         for i, forecast_df in enumerate(all_forecast_rows):
             m = forecast_df["목적"].iloc[0]
@@ -1090,23 +815,11 @@ def forecast_visitors(csv_path, 국적, 목적, 시작월, 종료월, window=12,
             hist_data = (
                 df[(df["국적"] == 국적) & (df["목적"] == m)].copy().sort_values("날짜")
             )
-            # 예측 구간 시작 날짜와 종료 날짜 추출
             pred_start_date = pred_df["날짜"].iloc[0]
             pred_end_date = pred_df["날짜"].iloc[-1]
-
-            # 실제값-예측값 비교 및 리포트 출력
             compare_actual_vs_predicted(hist_data, pred_df, m)
 
-    # 미래 예측 신뢰도 자동 리포트
-    reliability_info = load_backtest_reliability(국적, 목적 if 목적 else "전체")
-    if reliability_info is not None:
-        print(
-            f"[미래 예측 신뢰도] '{국적}-{목적 if 목적 else '전체'}' 과거 백테스트 기준: MAPE={reliability_info['MAPE']:.2f}%, Pearson={reliability_info['Pearson']:.3f}, Spearman={reliability_info['Spearman']:.3f}"
-        )
-    else:
-        print(
-            f"[미래 예측 신뢰도] '{국적}-{목적 if 목적 else '전체'}' 과거 백테스트 신뢰도 정보 없음"
-        )
+    # 미래 예측 신뢰도 자동 리포트 (출력 제거)
 
 
 def detailed_analysis_report(actual_df, pred_df, label, save_path=None):
@@ -1125,7 +838,6 @@ def detailed_analysis_report(actual_df, pred_df, label, save_path=None):
         suffixes=("_실제", "_예측"),
     )
     if len(merged) == 0:
-        print(f"[상세분석] '{label}' 실제값-예측값 비교 데이터 없음")
         return
     y_true = merged["입국자수"]
     y_pred = merged["예측입국자수"]
@@ -1158,13 +870,9 @@ def detailed_analysis_report(actual_df, pred_df, label, save_path=None):
         growth = (y_pred.iloc[-1] - y_pred.iloc[0]) / max(y_pred.iloc[0], 1)
     else:
         growth = np.nan
-    print(
-        f"[상세분석] '{label}' MAPE={mape:.2f}% | MAE={mae:.2f} | RMSE={rmse:.2f} | Pearson={pearson_corr:.3f} | Spearman={spearman_corr:.3f} | flat={is_flat} | 급락={is_crash} | 폭주={is_explode} | 성장률={growth:.2%}"
-    )
     merged["오차"] = y_true - y_pred
     if save_path:
         merged.to_csv(save_path, index=False)
-        print(f"[상세분석] 결과 CSV 저장: {save_path}")
     return merged
 
 
@@ -1174,7 +882,6 @@ if __name__ == "__main__":
     def valid_yyyymm(date_str):
         return bool(re.match(r"^\d{4}-\d{2}$", date_str))
 
-    print("외국인 입국자 예측 시스템")
     # 항상 절대경로로 통일
     csv_path = os.path.abspath(
         os.path.join(
