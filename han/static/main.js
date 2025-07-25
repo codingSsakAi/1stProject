@@ -70,6 +70,12 @@ window.onload = () => {
         document.getElementById('news-section').style.display = "none";
         document.getElementById('predict-section').style.display = "";
     };
+    // ← 이 부분이 핵심!
+    if (window.location.hash === '#news') {
+        document.getElementById('news-section').style.display = "";
+        document.getElementById('predict-section').style.display = "none";
+        loadNewsList();
+    }
 };
 
 // 예측 버튼 클릭: 조건 조합 구성, API 요청, 결과 그래프 표시
@@ -409,6 +415,7 @@ const showDetailSummary = () => {
             }
         }
     });
+    
     // 통계 함수
     const arrStat = arr => {
         arr = arr.flatMap(v => Array.isArray(v) ? v : [v]).filter(x => x != null && !isNaN(x));
@@ -466,3 +473,47 @@ const showDetailSummary = () => {
             <span class="text-secondary small">* 평가는 평균값 기준 (모델/기간마다 달라질 수 있음)</span>
         </div>`;
 };
+// 📰 뉴스 스크랩 기능 추가
+function loadNewsList(page = 1) {
+    const newsList = document.getElementById('news-list');
+    const pagination = document.getElementById('news-pagination');
+    newsList.innerHTML = '<li class="list-group-item">뉴스를 불러오는 중...</li>';
+    pagination.innerHTML = '';
+
+    fetch(`/api/news?page=${page}`)
+        .then(res => res.json())
+        .then(data => {
+            newsList.innerHTML = '';
+            if (data.news.length === 0) {
+                newsList.innerHTML = '<li class="list-group-item text-muted">표시할 뉴스가 없습니다.</li>';
+                return;
+            }
+            data.news.forEach(item => {
+                const el = document.createElement('li');
+                el.className = 'list-group-item';
+                el.innerHTML = `
+                    <h6><a href="${item.link}" target="_blank" rel="noopener noreferrer">${item.title}</a></h6>
+                    <div class="small text-muted mb-1">${item.pubDate}</div>
+                    <div class="small">${item.description}</div>
+                `;
+                newsList.appendChild(el);
+            });
+
+            // 페이지네이션 (최대 10페이지까지만 생성)
+            const totalPages = Math.min(10, Math.ceil(data.total / data.page_size));
+            for (let i = 1; i <= totalPages; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === page ? 'active' : ''}`;
+                const a = document.createElement('a');
+                a.className = 'page-link';
+                a.href = '#';
+                a.textContent = i;
+                a.onclick = (e) => {
+                    e.preventDefault();
+                    loadNewsList(i);
+                };
+                li.appendChild(a);
+                pagination.appendChild(li);
+            }
+        });
+}
