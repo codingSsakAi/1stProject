@@ -147,7 +147,7 @@ def api_predict():
 
 # 뉴스 API (필터·정렬·중복제거)
 BAD_WORDS = ["사망","사고","사건","범죄","폭력","논란","사기","불법","피해","징역","재판","폭우","화재","감염","확진","부상","부정","문제","논란",
-"총선","대선","정당","의원","국회","대통령","정치","정책","청와대","선거","야당","여당","국회의원","보수","진보"]
+"총선","대선","정당","의원","국회","대통령","정치","정책","청와대","선거","야당","여당","국회의원","보수","진보","압수","수색"]
 def naver_news_search(query, display=50, sort='date'):
     import requests
     url, cid, csec = "https://openapi.naver.com/v1/search/news.json", os.getenv("CLIENT_ID"), os.getenv("CLIENT_SECRET")
@@ -170,7 +170,7 @@ def filter_after_date_and_badwords(items, min_date):
 @app.route('/api/news')
 def api_news():
     keywords = (request.args.get('keywords') or "").split(',') if request.args.get('keywords') else [
-        "한국 축제", "한국 행사", "서울 전시회", "K-POP 콘서트", "외국인 체험 프로그램",
+        "한국 축제", "한국 행사", "서울 전시회", "K-POP 콘서트", "외국인 체험 프로그램", "계절 축제",
         "국제박람회", "국제컨퍼런스", "한국 예정 이벤트", "한국 대회", "한국 콘서트", "동계 축제", "봄 축제"
     ]
     page = int(request.args.get('page', 1)); page_size = 20
