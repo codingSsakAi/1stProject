@@ -27,7 +27,7 @@
 
 ## 목차
 
-[1. 주세선정 및 배경](서론1)</br>
+[1. 주세선정 및 배경](https://github.com/codingSsakAi/1stProject?tab=readme-ov-file#1-%EC%A3%BC%EC%A0%9C%EC%84%A0%EC%A0%95-%EB%B0%8F-%EB%B0%B0%EA%B2%BD)</br>
 [2. 목적 및 필요성](이미지URL을 가프키는 곳)</br>
 [3. 칸트 차트](이미지URL을 가프키는 곳)</br>
 
