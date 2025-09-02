@@ -6,7 +6,6 @@
 - 인원 : 4명
 - 기간 : 2025.07.07 ~ 2025.07.25
 - 언어 : Python 3.10.9
-- DBMS : MySQL
 - Python Library : numpy, pandas, matplotlib, seaborn, scipy, scikit-learn, tensorflow
 - micro Web Framework : flask
 - 프로젝트 소개 : 간단하게 데이터 전처리와 모델을 소개
@@ -56,4 +55,5 @@
 ![Image](https://github.com/user-attachments/assets/4f1d6c22-3bdc-4aca-a163-ed4f7b106b5e)
 ![Image](https://github.com/user-attachments/assets/3ff9005a-8ec3-4563-8258-2acec6f5c342)
 ![Image](https://github.com/user-attachments/assets/82edc910-53d4-4757-924f-fe71e0c60665)
+
 
