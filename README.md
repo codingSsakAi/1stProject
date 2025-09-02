@@ -28,7 +28,7 @@
 
 [1. 주세선정 및 배경](https://github.com/codingSsakAi/1stProject?tab=readme-ov-file#1-%EC%A3%BC%EC%A0%9C%EC%84%A0%EC%A0%95-%EB%B0%8F-%EB%B0%B0%EA%B2%BD)</br>
 [2. 목적 및 필요성](https://github.com/user-attachments/assets/59b4edbf-c920-4235-92ec-0d032902167d)</br>
-[3. 칸트 차트](https://github.com/user-attachments/assets/9bc3cade-e790-4bed-84c5-8f07f2cdaeb2)</br>
+[3. 칸트 차트](https://github.com/codingSsakAi/1stProject?tab=readme-ov-file#3-%EC%B9%B8%ED%8A%B8-%EC%B0%A8%ED%8A%B8)</br>
 
 ## 1. 주제선정 및 배경
 
@@ -55,6 +55,7 @@
 ![Image](https://github.com/user-attachments/assets/4f1d6c22-3bdc-4aca-a163-ed4f7b106b5e)
 ![Image](https://github.com/user-attachments/assets/3ff9005a-8ec3-4563-8258-2acec6f5c342)
 ![Image](https://github.com/user-attachments/assets/82edc910-53d4-4757-924f-fe71e0c60665)
+
 
 
 
